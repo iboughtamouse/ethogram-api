@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backend API Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            white-space: pre-wrap;
+        }
+        .success { border-left: 4px solid #22c55e; }
+        .error { border-left: 4px solid #ef4444; }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        button:hover { background: #2563eb; }
+    </style>
+</head>
+<body>
+    <h1>🔌 Backend API Connection Test</h1>
+    <p>Testing connection to: <code>http://localhost:8080/api/health</code></p>
+
+    <button onclick="testConnection()">Test Connection</button>
+
+    <div id="result"></div>
+
+    <script>
+        async function testConnection() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<div class="result">Testing connection...</div>';
+
+            try {
+                const response = await fetch('http://localhost:8080/api/health', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                resultDiv.innerHTML = `
+                    <div class="result success">
+                        <strong>✅ SUCCESS!</strong><br><br>
+                        <strong>Status:</strong> ${response.status} ${response.statusText}<br>
+                        <strong>CORS:</strong> ${response.headers.get('Access-Control-Allow-Origin') || 'Not set'}<br><br>
+                        <strong>Response:</strong><br>
+                        ${JSON.stringify(data, null, 2)}
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ ERROR</strong><br><br>
+                        ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        // Auto-test on load
+        window.onload = () => testConnection();
+    </script>
+</body>
+</html>
