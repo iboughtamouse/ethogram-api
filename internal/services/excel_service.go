@@ -114,12 +114,21 @@ func (s *ExcelService) GenerateObservationExcel(obs *models.Observation) (*bytes
 	}
 
 	// Rows 5+: Behavior rows
+	behaviorLabelStyle, _ := f.NewStyle(&excelize.Style{
+		Alignment: &excelize.Alignment{
+			WrapText: true,
+			Vertical: "top",
+		},
+	})
+
 	for i, behaviorValue := range behaviorOrder {
 		rowIndex := 5 + i
 		behaviorLabel := behaviorLabels[behaviorValue]
 
-		// Column A: Behavior label
-		f.SetCellValue(sheetName, fmt.Sprintf("A%d", rowIndex), behaviorLabel)
+		// Column A: Behavior label with text wrapping
+		cellAddr := fmt.Sprintf("A%d", rowIndex)
+		f.SetCellValue(sheetName, cellAddr, behaviorLabel)
+		f.SetCellStyle(sheetName, cellAddr, cellAddr, behaviorLabelStyle)
 
 		// Check each time slot for this behavior
 		for j, timeKey := range timeSlots {
@@ -127,17 +136,17 @@ func (s *ExcelService) GenerateObservationExcel(obs *models.Observation) (*bytes
 			if len(subjects) > 0 && subjects[0].Behavior == behaviorValue {
 				col := indexToColumn(j + 2)
 				cellContent := formatCellContent(subjects[0])
-				cellAddr := fmt.Sprintf("%s%d", col, rowIndex)
-				f.SetCellValue(sheetName, cellAddr, cellContent)
+				dataCell := fmt.Sprintf("%s%d", col, rowIndex)
+				f.SetCellValue(sheetName, dataCell, cellContent)
 
-				// Enable text wrapping
-				style, _ := f.NewStyle(&excelize.Style{
+				// Enable text wrapping for data cells
+				dataStyle, _ := f.NewStyle(&excelize.Style{
 					Alignment: &excelize.Alignment{
 						WrapText: true,
 						Vertical: "top",
 					},
 				})
-				f.SetCellStyle(sheetName, cellAddr, cellAddr, style)
+				f.SetCellStyle(sheetName, dataCell, dataCell, dataStyle)
 			}
 		}
 	}
@@ -150,11 +159,12 @@ func (s *ExcelService) GenerateObservationExcel(obs *models.Observation) (*bytes
 	}
 	f.SetCellValue(sheetName, fmt.Sprintf("A%d", commentsRow), commentsText)
 
-	// Set column widths
-	f.SetColWidth(sheetName, "A", "A", 50)
-	for i := 2; i <= len(timeSlots)+1; i++ {
+	// Set column widths to match original format
+	f.SetColWidth(sheetName, "A", "A", 25.75) // Behavior column
+	f.SetColWidth(sheetName, "B", "B", 4.88)   // Time label column
+	for i := 3; i <= len(timeSlots)+2; i++ {  // Time slot columns (C onwards)
 		col := indexToColumn(i)
-		f.SetColWidth(sheetName, col, col, 12)
+		f.SetColWidth(sheetName, col, col, 13.0)
 	}
 
 	// Write to buffer
