@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "test": "vitest",
     "test:run": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx scripts/migrate.ts"
   },
   "repository": {
     "type": "git",
