@@ -182,19 +182,23 @@ func (r *ObservationRepository) List(ctx context.Context, filters ObservationFil
 		whereClause = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// Validate and set sort field
-	validSortFields := map[string]bool{
-		"submitted_at":     true,
-		"observation_date": true,
-		"observer_name":    true,
-		"created_at":       true,
-	}
-	sortBy := "submitted_at"
-	if filters.SortBy != "" && validSortFields[filters.SortBy] {
-		sortBy = filters.SortBy
+	// Map validated sort fields to actual column names to prevent SQL injection
+	// Even though we validate, we use a whitelist map to ensure safe SQL generation
+	validSortFields := map[string]string{
+		"submitted_at":     "submitted_at",
+		"observation_date": "observation_date",
+		"observer_name":    "observer_name",
+		"created_at":       "created_at",
 	}
 
-	// Validate sort order
+	sortBy := "submitted_at" // default
+	if filters.SortBy != "" {
+		if mappedField, ok := validSortFields[filters.SortBy]; ok {
+			sortBy = mappedField
+		}
+	}
+
+	// Validate sort order with whitelist
 	sortOrder := "DESC"
 	if filters.SortOrder == "asc" || filters.SortOrder == "ASC" {
 		sortOrder = "ASC"
