@@ -8,11 +8,11 @@ A production-ready REST API for behavioral observation data collection, built en
 
 ## Project Purpose
 
-This repository serves as a case study in **AI-assisted development**, where every line of code, test, and documentation was written by Claude (Anthropic's AI assistant) under human guidance. The goal was to explore:
+This repository serves as a case study in **AI-driven, human-assisted development**, where every line of code, test, and documentation was written by Claude (Anthropic's AI assistant) under human guidance. The goal was to explore:
 
-- **AI's ability to build production-quality software** with proper architecture, testing, and documentation
-- **Human-AI collaboration patterns** for complex software projects
-- **Code quality and maintainability** when AI is the primary developer
+- **AI's ability to autonomously build production-quality software** with proper architecture, testing, and documentation
+- **Role reversal in human-AI collaboration** - AI as the developer, human as the guide
+- **Code quality and maintainability** when AI owns implementation decisions
 
 **Disclaimer**: This project is not affiliated with any organization. It is an educational/portfolio project demonstrating AI capabilities in software engineering.
 
@@ -524,7 +524,7 @@ This is an **AI-generated project** serving as a case study. Contributions are w
 
 ## AI Development Notes
 
-This entire codebase was written by Claude (Anthropic's AI) with human guidance. Key observations:
+This entire codebase was written by Claude (Anthropic's AI) with human guidance - representing **AI-driven, human-assisted development** rather than traditional AI-assisted coding. Key observations:
 
 ### What Worked Well
 
@@ -560,9 +560,11 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- **Built by**: Claude (Anthropic AI)
-- **Guided by**: [@iboughtamouse](https://github.com/iboughtamouse)
-- **Purpose**: Educational case study in AI-driven software development
+- **Built by**: Claude (Anthropic AI) - autonomous code generation
+- **Guided by**: [@iboughtamouse](https://github.com/iboughtamouse) - requirements, feedback, validation
+- **Purpose**: Educational case study in **AI-driven, human-assisted development**
+
+This project inverts the traditional AI coding assistant model: the AI drives implementation while the human provides strategic guidance and quality oversight.
 
 ---
 
