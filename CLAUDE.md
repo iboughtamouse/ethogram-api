@@ -2,7 +2,7 @@
 
 > **Purpose**: This document provides AI coding assistants (like Claude) with essential context about the WBS Ethogram Backend API, its architecture, implementation patterns, and development workflows.
 >
-> **Last Updated**: November 28, 2025
+> **Last Updated**: November 29, 2025
 > **Status**: Phase 2 Ready for Implementation
 > **Target**: Go 1.21+ with Gin framework on Fly.io
 
@@ -544,76 +544,162 @@ type Observation struct {
 
 ## Testing Strategy
 
-### Unit Tests
+### 🚨 CRITICAL: Always Run Tests Before Committing
 
-Test each layer independently:
+**NEVER commit test code without verifying it runs and passes.** Tests that don't run are worse than no tests.
 
-**Service Layer:**
+**Required workflow for test development:**
+1. Write the test code
+2. Run `go test ./...` and verify it passes
+3. Only then commit the test
+4. If tests fail, fix them before committing
+
+This applies to ALL test code - service tests, repository tests, handler tests. No exceptions.
+
+### Testing Architecture: Layers and Mocking Strategy
+
+**Service Layer Tests** - Use mocks for dependencies:
+- **Mock**: Repository, external services (email, Excel)
+- **Real**: None (pure unit tests)
+- **Purpose**: Test business logic in isolation
+- **Location**: `internal/services/*_test.go`
 
 ```go
-func TestObservationService_Create(t *testing.T) {
-    // Mock repository
-    mockRepo := &MockObservationRepo{}
+func TestObservationService_GetByID(t *testing.T) {
+    // Create mock repository (use testify/mock)
+    mockRepo := new(database.MockObservationRepository)
     service := NewObservationService(mockRepo, nil, nil)
 
-    // Test creation
-    obs, err := service.Create(ctx, validRequest)
+    expectedObs := &models.Observation{ID: uuid.New()}
+    mockRepo.On("GetByID", mock.Anything, expectedObs.ID).Return(expectedObs, nil)
+
+    // Test service logic
+    result, err := service.GetByID(ctx, expectedObs.ID.String())
+
     assert.NoError(t, err)
-    assert.NotNil(t, obs)
+    assert.Equal(t, expectedObs, result)
+    mockRepo.AssertExpectations(t)
 }
 ```
 
-**Repository Layer:**
+**Repository Layer Tests** - Use real test database:
+- **Mock**: Nothing
+- **Real**: PostgreSQL test database
+- **Purpose**: Test actual SQL queries, JSONB handling, constraints
+- **Location**: `internal/database/*_test.go`
 
 ```go
-func TestObservationRepo_Insert(t *testing.T) {
-    // Use test database
+func TestObservationRepo_GetByID(t *testing.T) {
+    // Use real test database
     db := setupTestDB(t)
-    defer db.Close()
-
     repo := NewObservationRepository(db)
-    err := repo.Insert(ctx, observation)
+
+    // Create test data
+    obs := &models.Observation{
+        ObserverName: "Test",
+        // ... other fields
+    }
+    err := repo.Create(ctx, obs)
+    require.NoError(t, err)
+
+    // Test retrieval
+    retrieved, err := repo.GetByID(ctx, obs.ID)
+
     assert.NoError(t, err)
+    assert.Equal(t, obs.ID, retrieved.ID)
 }
 ```
 
-### Integration Tests
+**Why real database for repository tests?**
+- JSONB operations are complex to mock
+- Validates actual SQL syntax
+- Catches database-specific issues
+- Tests data type conversions
+- Verifies constraint enforcement
 
-Test HTTP endpoints with real database:
+**Handler Layer Tests** - Use mocked services:
+- **Mock**: Service layer
+- **Real**: HTTP test recorder (httptest)
+- **Purpose**: Test HTTP handling, request parsing, response formatting
+- **Location**: `internal/handlers/*_test.go`
 
-```go
-func TestCreateObservation_Integration(t *testing.T) {
-    // Setup test server with test DB
-    router := setupTestRouter(t)
+### Test Database Setup
 
-    // Make request
-    req := httptest.NewRequest("POST", "/api/observations", body)
-    w := httptest.NewRecorder()
-    router.ServeHTTP(w, req)
+**Connection string**: Use environment variable `TEST_DATABASE_URL` or default to local test database.
 
-    // Assert response
-    assert.Equal(t, 201, w.Code)
-}
-```
-
-### Test Database
-
-Use separate test database:
+**Required helper function** (`internal/database/test_helpers.go`):
 
 ```go
-func setupTestDB(t *testing.T) *sqlx.DB {
-    db := sqlx.MustConnect("postgres", os.Getenv("TEST_DATABASE_URL"))
+func setupTestDB(t *testing.T) *DB {
+    testDBURL := os.Getenv("TEST_DATABASE_URL")
+    if testDBURL == "" {
+        testDBURL = "postgres://postgres:postgres@localhost:5432/ethogram?sslmode=disable"
+    }
 
-    // Run migrations
-    runMigrations(db)
+    db, err := Connect(testDBURL)
+    require.NoError(t, err, "Failed to connect to test database - is PostgreSQL running?")
 
-    // Cleanup after test
+    // Cleanup after each test - prevents test interference
     t.Cleanup(func() {
-        db.Exec("TRUNCATE observations CASCADE")
+        _, err := db.Exec("TRUNCATE observations CASCADE")
+        if err != nil {
+            t.Logf("Warning: failed to truncate observations: %v", err)
+        }
+        db.Close()
     })
 
     return db
 }
+```
+
+**Test isolation**: Each test function gets a fresh database state via `TRUNCATE` in cleanup.
+
+### Mock Repository Pattern
+
+**Location**: Create `internal/database/mock_repository.go`
+
+```go
+package database
+
+import (
+    "context"
+    "github.com/google/uuid"
+    "github.com/iboughtamouse/ethogram-api/internal/models"
+    "github.com/stretchr/testify/mock"
+)
+
+type MockObservationRepository struct {
+    mock.Mock
+}
+
+func (m *MockObservationRepository) GetByID(ctx context.Context, id uuid.UUID) (*models.Observation, error) {
+    args := m.Called(ctx, id)
+    if args.Get(0) == nil {
+        return nil, args.Error(1)
+    }
+    return args.Get(0).(*models.Observation), args.Error(1)
+}
+
+// ... other methods
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run specific package tests
+go test ./internal/services
+
+# Run with verbose output
+go test -v ./...
+
+# Run specific test function
+go test -run TestObservationService_GetByID ./internal/services
+
+# Run with coverage
+go test -cover ./...
 ```
 
 ---
@@ -881,6 +967,62 @@ SELECT * FROM observations WHERE id = '...';
 ---
 
 ## Things to Avoid
+
+### ❌ Don't: Commit tests without running them
+
+**Why**: Tests that don't run are worse than no tests - they give false confidence
+
+```go
+// 🚨 CRITICAL ERROR - This workflow is FORBIDDEN:
+// 1. Write test code
+// 2. Commit test code without running it
+// 3. Push to remote
+
+// ✅ REQUIRED workflow:
+// 1. Write test code
+// 2. Run: go test ./...
+// 3. Verify all tests pass
+// 4. Only then commit and push
+```
+
+**Always verify tests:**
+- Can connect to test database (if needed)
+- All assertions pass
+- No syntax errors
+- No import errors
+- Tests run to completion
+
+**If you cannot run tests** (network issues, missing dependencies, etc.), **DO NOT commit the test code**. Wait until the environment is fixed or ask for help.
+
+### ❌ Don't: Create overly large commits
+
+**Why**: Large commits are hard to review, debug, and revert
+
+```bash
+# ❌ BAD - One commit with 14 files, 1,363 lines
+feat: add middleware, GET endpoints, tests, and deployment config
+
+# ✅ GOOD - Break into focused commits
+feat: add CORS middleware
+feat: add rate limiting middleware with Redis
+feat: add error handling middleware
+feat: add GET /api/observations endpoint
+feat: add GET /api/observations/:id endpoint
+test: add tests for observation service
+docs: add deployment documentation
+```
+
+**Commit size guidelines:**
+- **Ideal**: 1-3 files, 50-200 lines changed
+- **Maximum**: 5-7 files, 400 lines changed
+- **Rule of thumb**: One logical change per commit
+- **Each commit should**: Build successfully, pass tests, be easily reviewable
+
+**When to split commits:**
+- Adding multiple features → one commit per feature
+- Fixing multiple bugs → one commit per bug
+- Adding tests for multiple methods → one commit per test group
+- Making changes across multiple layers → one commit per layer
 
 ### ❌ Don't: Use ORM for complex queries
 
