@@ -40,7 +40,9 @@ func main() {
 	observationRepo := database.NewObservationRepository(db)
 
 	// Initialize services
-	observationService := services.NewObservationService(observationRepo)
+	excelService := services.NewExcelService()
+	emailService := services.NewEmailService(cfg.ResendAPIKey, cfg.EmailFrom)
+	observationService := services.NewObservationService(observationRepo, excelService, emailService)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()

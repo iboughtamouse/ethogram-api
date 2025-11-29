@@ -11,12 +11,18 @@ import (
 
 // ObservationService handles observation business logic
 type ObservationService struct {
-	repo *database.ObservationRepository
+	repo         *database.ObservationRepository
+	excelService *ExcelService
+	emailService *EmailService
 }
 
 // NewObservationService creates a new observation service
-func NewObservationService(repo *database.ObservationRepository) *ObservationService {
-	return &ObservationService{repo: repo}
+func NewObservationService(repo *database.ObservationRepository, excelService *ExcelService, emailService *EmailService) *ObservationService {
+	return &ObservationService{
+		repo:         repo,
+		excelService: excelService,
+		emailService: emailService,
+	}
 }
 
 // Create processes and saves a new observation
@@ -46,12 +52,39 @@ func (s *ObservationService) Create(ctx context.Context, req *models.CreateObser
 		Emails:             req.Emails,
 	}
 
-	// Save to database
+	// Save to database first (ensure data is never lost)
 	if err := s.repo.Create(ctx, obs); err != nil {
 		return nil, fmt.Errorf("failed to create observation: %w", err)
 	}
 
+	// Generate Excel and send email asynchronously (don't block response)
+	// If this fails, observation is still saved
+	if s.excelService != nil && s.emailService != nil && len(obs.Emails) > 0 {
+		go s.sendObservationEmail(obs)
+	}
+
 	return obs, nil
+}
+
+// sendObservationEmail generates Excel and sends email
+// Runs asynchronously to avoid blocking the HTTP response
+func (s *ObservationService) sendObservationEmail(obs *models.Observation) {
+	// Generate Excel file
+	excelData, err := s.excelService.GenerateObservationExcel(obs)
+	if err != nil {
+		// Log error (in production, use structured logging)
+		fmt.Printf("ERROR: Failed to generate Excel for observation %s: %v\n", obs.ID, err)
+		return
+	}
+
+	// Send email with Excel attachment
+	if err := s.emailService.SendObservationEmail(obs, excelData); err != nil {
+		// Log error (in production, use structured logging)
+		fmt.Printf("ERROR: Failed to send email for observation %s: %v\n", obs.ID, err)
+		return
+	}
+
+	fmt.Printf("INFO: Email sent successfully for observation %s to %v\n", obs.ID, obs.Emails)
 }
 
 // transformFlatToArray converts Phase 2 flat observations to array structure

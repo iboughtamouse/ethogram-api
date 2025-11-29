@@ -39,7 +39,9 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *database.DB) {
 	// Set up router with handlers
 	router := gin.New()
 	observationRepo := database.NewObservationRepository(db)
-	observationService := services.NewObservationService(observationRepo)
+	excelService := services.NewExcelService()
+	emailService := services.NewEmailService("test-api-key", "test@example.com")
+	observationService := services.NewObservationService(observationRepo, excelService, emailService)
 	observationHandler := NewObservationHandler(observationService)
 
 	router.POST("/api/observations", observationHandler.Create)
