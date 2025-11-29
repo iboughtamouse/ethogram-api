@@ -42,7 +42,7 @@ func Load() (*Config, error) {
 		DatabaseURL:   getEnv("DATABASE_URL", ""),
 		RedisURL:      getEnv("REDIS_URL", "redis://localhost:6379"),
 		ResendAPIKey:  getEnv("RESEND_API_KEY", ""),
-		EmailFrom:     getEnv("EMAIL_FROM", "noreply@ethogram.worldbirdsanctuary.org"),
+		EmailFrom:     getEnv("EMAIL_FROM", ""),
 		AllowedOrigins: strings.Split(getEnv("ALLOWED_ORIGINS", "http://localhost:5173"), ","),
 		RateLimitRequests: getEnvInt("RATE_LIMIT_REQUESTS", 10),
 		RateLimitWindow:   getEnvInt("RATE_LIMIT_WINDOW", 3600),

@@ -201,7 +201,7 @@ func (s *EmailService) generateEmailHTML(obs *models.Observation) string {
             <p>Your Excel file is attached. This file contains your observation data in the standard WBS ethogram format with metadata header rows and a behavioral matrix layout.</p>
 
             <div class="footer">
-                <p>If you have any questions or notice any issues, please contact us at support@worldbirdsanctuary.org.</p>
+                <p>If you have any questions or notice any issues, please reply to this email.</p>
                 <p>Thank you for contributing to our research!</p>
                 <p><strong>World Bird Sanctuary Ethogram Team</strong></p>
             </div>
