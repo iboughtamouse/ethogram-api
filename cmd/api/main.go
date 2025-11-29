@@ -30,11 +30,22 @@ func main() {
 	// Set Gin mode
 	gin.SetMode(cfg.GinMode)
 
-	// Create router
-	router := gin.Default()
+	// Create router (without default middleware, we'll add our own)
+	router := gin.New()
 
-	// Apply middleware
-	router.Use(middleware.CORS(cfg.AllowedOrigins))
+	// Initialize rate limiter
+	rateLimiter, err := middleware.NewRateLimiter(cfg.RedisURL, cfg.RateLimitRequests, cfg.RateLimitWindow)
+	if err != nil {
+		log.Fatalf("Failed to initialize rate limiter: %v", err)
+	}
+	defer rateLimiter.Close()
+	log.Println("✓ Connected to Redis")
+
+	// Apply middleware in order
+	router.Use(middleware.Logger())        // Request/response logging
+	router.Use(middleware.ErrorHandler())  // Panic recovery and error handling
+	router.Use(middleware.CORS(cfg.AllowedOrigins)) // CORS headers
+	router.Use(rateLimiter.Middleware())   // Rate limiting
 
 	// Initialize repositories
 	observationRepo := database.NewObservationRepository(db)
@@ -53,6 +64,8 @@ func main() {
 	{
 		api.GET("/health", healthHandler.HealthCheck)
 		api.POST("/observations", observationHandler.Create)
+		api.GET("/observations", observationHandler.List)
+		api.GET("/observations/:id", observationHandler.GetByID)
 	}
 
 	// Start server

@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+CLAUDE.md
+README.md
+api-specification.md
+database-schema.md
+
+# Environment files
+.env
+.env.*
+
+# Test files
+*_test.go
+test-*.json
+test-*.html
+
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fly.io
+fly.toml
+.fly/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Scripts
+scripts/
+
+# Example files
+.env.example
+*.xlsx

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/iboughtamouse/ethogram-api/internal/database"
 	"github.com/iboughtamouse/ethogram-api/internal/models"
 )
@@ -114,4 +115,26 @@ func transformFlatToArray(flatSlots map[string]models.FlatObservation) models.Ti
 	}
 
 	return arraySlots
+}
+
+// GetByID retrieves a single observation by ID
+func (s *ObservationService) GetByID(ctx context.Context, id string) (*models.Observation, error) {
+	// Parse UUID
+	observationID, err := uuid.Parse(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid observation ID: %w", err)
+	}
+
+	// Get from repository
+	obs, err := s.repo.GetByID(ctx, observationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get observation: %w", err)
+	}
+
+	return obs, nil
+}
+
+// List retrieves observations with filters and pagination
+func (s *ObservationService) List(ctx context.Context, filters database.ObservationFilters) (*database.ObservationListResult, error) {
+	return s.repo.List(ctx, filters)
 }

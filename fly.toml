@@ -1,0 +1,65 @@
+# fly.toml - Fly.io deployment configuration
+# See https://fly.io/docs/reference/configuration/ for more options
+
+app = "wbs-ethogram-api"
+primary_region = "ord" # Chicago - adjust based on your users' location
+
+# Build configuration
+[build]
+  dockerfile = "Dockerfile"
+
+# Environment variables
+[env]
+  PORT = "8080"
+  GIN_MODE = "release"
+
+# HTTP service configuration
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # HTTP port (will redirect to HTTPS)
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  # HTTPS port
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  # Health check configuration
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/api/health"
+    protocol = "http"
+
+  # Concurrency settings
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+# VM resources
+[vm]
+  size = "shared-cpu-1x"  # 256MB RAM - suitable for low traffic
+  # For production with higher traffic, consider:
+  # size = "shared-cpu-2x" # 512MB RAM
+  # size = "shared-cpu-4x" # 1GB RAM
+
+# Deployment settings
+[deploy]
+  release_command = "echo 'Deployment starting...'"
+  strategy = "rolling"
+
+# Metrics
+[metrics]
+  port = 8080
+  path = "/api/health"

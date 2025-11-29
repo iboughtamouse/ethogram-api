@@ -32,9 +32,11 @@ The Ethogram API stores and serves behavioral observation data for animal resear
 
 - ✅ **60.3% test coverage** with comprehensive unit and integration tests
 - ✅ **Phase-aware architecture** - Built for single-subject (Phase 2), ready for multi-subject (Phase 4)
-- ✅ **Production-ready** - CORS, rate limiting, structured logging, error handling
+- ✅ **Production-ready** - CORS, Redis-backed rate limiting, structured logging, error handling
+- ✅ **Full REST API** - Create, read, list with filtering and pagination
 - ✅ **Type-safe** - Strong typing with Go, validated requests
 - ✅ **Well-documented** - Extensive inline documentation and architecture guides
+- ✅ **Deployment-ready** - Dockerfile and Fly.io configuration included
 
 ---
 
@@ -169,7 +171,26 @@ Content-Type: application/json
 }
 ```
 
-See [API Specification](docs/api-specification.md) for complete documentation.
+### List Observations (with filtering)
+```http
+GET /api/observations?aviary=Main%20Aviary&startDate=2025-11-01&limit=10
+```
+
+**Query Parameters**:
+- `aviary` - Filter by aviary name
+- `startDate` / `endDate` - Date range filter (YYYY-MM-DD)
+- `observerName` - Filter by observer (partial match)
+- `mode` - Filter by mode (live/vod)
+- `babiesPresent` - Filter by baby count
+- `limit` / `offset` - Pagination (default limit: 50, max: 500)
+- `sortBy` / `sortOrder` - Sorting (default: submittedAt desc)
+
+### Get Single Observation
+```http
+GET /api/observations/:id
+```
+
+See [API Specification](api-specification.md) for complete documentation.
 
 ---
 
@@ -486,19 +507,25 @@ docker run -p 8080:8080 \
 GIN_MODE=release
 PORT=8080
 DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require
+REDIS_URL=redis://user:pass@host:6379
 RESEND_API_KEY=re_live_xxxxxxxxxxxx
 EMAIL_FROM=noreply@yourdomain.com
 ALLOWED_ORIGINS=https://yourapp.com
+RATE_LIMIT_REQUESTS=100
+RATE_LIMIT_WINDOW=3600
 ```
 
 **⚠️ Production Checklist**:
 - [ ] Use `GIN_MODE=release`
 - [ ] Enable SSL for database (`sslmode=require`)
+- [ ] Configure Redis for rate limiting
 - [ ] Use production Resend API key
-- [ ] Configure CORS for production domain
+- [ ] Configure CORS for production domain only
+- [ ] Set appropriate rate limits (requests/window)
 - [ ] Set up monitoring/logging
 - [ ] Run database migrations
 - [ ] Test email delivery
+- [ ] Verify health check endpoint responds
 
 ---
 
