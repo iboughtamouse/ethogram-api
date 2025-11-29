@@ -1,40 +1,7 @@
-# Binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-bin/
-dist/
-
-# Go
-*.test
-*.out
-go.work
-
-# Environment variables
+node_modules/
 .env
 .env.local
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+dist/
+coverage/
 *.log
-
-# Test coverage
-coverage.txt
-coverage.html
-
-# Excel files (user-generated)
-*.xlsx
-*.xls
-!1\ Hour\ Ethogram\ Section\(1\).xlsx
+.DS_Store
