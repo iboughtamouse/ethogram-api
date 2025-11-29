@@ -33,19 +33,23 @@ func main() {
 	// Create router (without default middleware, we'll add our own)
 	router := gin.New()
 
-	// Initialize rate limiter
+	// Initialize rate limiter (optional - graceful degradation if unavailable)
 	rateLimiter, err := middleware.NewRateLimiter(cfg.RedisURL, cfg.RateLimitRequests, cfg.RateLimitWindow)
 	if err != nil {
-		log.Fatalf("Failed to initialize rate limiter: %v", err)
+		log.Printf("⚠ WARNING: Failed to connect to Redis, rate limiting will be disabled: %v", err)
+		log.Println("⚠ WARNING: Application will run without rate limiting - not recommended for production")
+	} else {
+		defer rateLimiter.Close()
+		log.Println("✓ Connected to Redis - rate limiting enabled")
 	}
-	defer rateLimiter.Close()
-	log.Println("✓ Connected to Redis")
 
 	// Apply middleware in order
 	router.Use(middleware.Logger())        // Request/response logging
 	router.Use(middleware.ErrorHandler())  // Panic recovery and error handling
 	router.Use(middleware.CORS(cfg.AllowedOrigins)) // CORS headers
-	router.Use(rateLimiter.Middleware())   // Rate limiting
+	if rateLimiter != nil {
+		router.Use(rateLimiter.Middleware())   // Rate limiting (if Redis available)
+	}
 
 	// Initialize repositories
 	observationRepo := database.NewObservationRepository(db)
