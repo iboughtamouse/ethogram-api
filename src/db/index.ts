@@ -6,6 +6,11 @@ export const pool = new Pool({
   connectionString: config.databaseUrl,
 });
 
+// Handle unexpected errors on idle clients to prevent crashes
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle database client', err);
+});
+
 // Simple query helper - returns the full QueryResult
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
