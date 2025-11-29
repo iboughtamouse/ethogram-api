@@ -168,6 +168,14 @@ func (h *ObservationHandler) List(c *gin.Context) {
 			))
 			return
 		}
+		if l < 0 {
+			c.JSON(http.StatusBadRequest, utils.ErrorResponse(
+				"VALIDATION_ERROR",
+				"limit must be non-negative",
+				"",
+			))
+			return
+		}
 		filters.Limit = l
 	}
 
