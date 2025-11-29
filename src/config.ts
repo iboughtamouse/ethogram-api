@@ -6,9 +6,9 @@ const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST;
 const envSchema = z.object({
   PORT: z.string().default('3000'),
   HOST: z.string().default('0.0.0.0'),
-  DATABASE_URL: isTest ? z.string().default('postgres://test:test@localhost:5432/test') : z.string().url(),
+  DATABASE_URL: z.string().url().default('postgres://test:test@localhost:5432/test'),
   RESEND_API_KEY: isTest ? z.string().default('test_key') : z.string().min(1),
-  EMAIL_FROM: isTest ? z.string().default('test@test.com') : z.string().email(),
+  EMAIL_FROM: z.string().email().default('test@test.com'),
   ALLOWED_ORIGINS: z.string().default('http://localhost:5173'),
 });
 
