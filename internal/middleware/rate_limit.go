@@ -16,6 +16,7 @@ type RateLimiter struct {
 	client       *redis.Client
 	maxRequests  int
 	windowPeriod time.Duration
+	luaScript    *redis.Script
 }
 
 // NewRateLimiter creates a new rate limiter instance
@@ -35,10 +36,22 @@ func NewRateLimiter(redisURL string, maxRequests int, windowSeconds int) (*RateL
 		return nil, fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
+	// Lua script for atomic INCR + EXPIRE
+	// This prevents race condition where key might never expire if process crashes
+	// between INCR and EXPIRE commands
+	luaScript := redis.NewScript(`
+		local current = redis.call('INCR', KEYS[1])
+		if current == 1 then
+			redis.call('EXPIRE', KEYS[1], ARGV[1])
+		end
+		return current
+	`)
+
 	return &RateLimiter{
 		client:       client,
 		maxRequests:  maxRequests,
 		windowPeriod: time.Duration(windowSeconds) * time.Second,
+		luaScript:    luaScript,
 	}, nil
 }
 
@@ -51,11 +64,9 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 
 		ctx := c.Request.Context()
 
-		// Increment request count
-		pipe := rl.client.Pipeline()
-		incr := pipe.Incr(ctx, key)
-		pipe.Expire(ctx, key, rl.windowPeriod)
-		_, err := pipe.Exec(ctx)
+		// Execute atomic INCR+EXPIRE using Lua script
+		// This prevents race condition where keys might never expire
+		result, err := rl.luaScript.Run(ctx, rl.client, []string{key}, int(rl.windowPeriod.Seconds())).Result()
 
 		if err != nil {
 			// If Redis fails, allow the request but log the error
@@ -64,8 +75,13 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 			return
 		}
 
-		// Get current count
-		count := incr.Val()
+		// Get current count from Lua script result
+		count, ok := result.(int64)
+		if !ok {
+			log.Printf("WARNING: Rate limiter unexpected result type (allowing request)")
+			c.Next()
+			return
+		}
 
 		// Set rate limit headers
 		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", rl.maxRequests))
