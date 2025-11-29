@@ -189,6 +189,14 @@ func (h *ObservationHandler) List(c *gin.Context) {
 			))
 			return
 		}
+		if o < 0 {
+			c.JSON(http.StatusBadRequest, utils.ErrorResponse(
+				"VALIDATION_ERROR",
+				"offset must be non-negative",
+				"",
+			))
+			return
+		}
 		filters.Offset = o
 	}
 
