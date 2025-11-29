@@ -146,6 +146,14 @@ func (h *ObservationHandler) List(c *gin.Context) {
 			))
 			return
 		}
+		if bp < 0 {
+			c.JSON(http.StatusBadRequest, utils.ErrorResponse(
+				"VALIDATION_ERROR",
+				"babiesPresent must be non-negative",
+				"",
+			))
+			return
+		}
 		filters.BabiesPresent = &bp
 	}
 
