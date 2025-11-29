@@ -32,18 +32,23 @@ This project is **AI-driven, human-assisted**. AI writes all code; humans review
 - **Explicit over implicit.** No magic.
 - **Comments explain "why"**, not "what".
 
+### Development Approach
+- **Describe before building.** Before writing code, describe what it should do in plain English. Wait for approval.
+- **Tests accompany code.** Every feature includes tests. Tests are required before committing, not before coding.
+- **Tests verify requirements, not implementation.** Write tests that catch unmet requirements, not tests that mirror code structure.
+
 ## Project Context
 
 | Resource | Location |
 |----------|----------|
 | API Specification | `docs/api-specification.md` |
 | Database Schema | `docs/database-schema.md` |
-| Stack | TBD — Node.js and PostgreSQL confirmed |
+| Stack | Node.js, TypeScript, Fastify, PostgreSQL (raw SQL), Zod, Vitest |
 
 ## Session Log
 
 _Updated at the end of each session._
 
-**Last session:** Discussed project reset, established working agreement (this document).
+**Last session (Nov 29):** Reset project, established working agreement, scaffolded Fastify + TypeScript project with health endpoint and tests.
 
-**Next:** Decide on tech stack. Knowns: Node.js, PostgreSQL. Open questions: TypeScript vs JavaScript, Express vs Fastify vs Hono, ORM vs query builder, project structure.
+**Next:** Database connection, POST /api/observations endpoint.
