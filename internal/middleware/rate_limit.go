@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -58,6 +59,7 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 
 		if err != nil {
 			// If Redis fails, allow the request but log the error
+			log.Printf("WARNING: Rate limiter Redis error (allowing request): %v", err)
 			c.Next()
 			return
 		}
