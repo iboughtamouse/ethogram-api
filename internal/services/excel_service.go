@@ -89,8 +89,18 @@ func (s *ExcelService) GenerateObservationExcel(obs *models.Observation) (*bytes
 	}
 	sort.Strings(timeSlots)
 
+	// Create styles
+	titleStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true},
+	})
+
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true},
+	})
+
 	// Row 1: Title, Date, Time Window
 	f.SetCellValue(sheetName, "A1", "Rehabilitation Raptor Ethogram")
+	f.SetCellStyle(sheetName, "A1", "A1", titleStyle)
 	f.SetCellValue(sheetName, "B1", "Date:")
 	f.SetCellValue(sheetName, "C1", obs.ObservationDate.Format("2006-01-02"))
 	f.SetCellValue(sheetName, "J1", "Time Window:")
@@ -103,8 +113,9 @@ func (s *ExcelService) GenerateObservationExcel(obs *models.Observation) (*bytes
 	f.SetCellValue(sheetName, "J2", "Observer:")
 	f.SetCellValue(sheetName, "K2", obs.ObserverName)
 
-	// Row 3: "Time:" label
+	// Row 3: "Time:" label (bold)
 	f.SetCellValue(sheetName, "B3", "Time:")
+	f.SetCellStyle(sheetName, "B3", "B3", headerStyle)
 
 	// Row 4: Time slot headers (relative format)
 	for i, timeKey := range timeSlots {
@@ -166,6 +177,17 @@ func (s *ExcelService) GenerateObservationExcel(obs *models.Observation) (*bytes
 		col := indexToColumn(i)
 		f.SetColWidth(sheetName, col, col, 13.0)
 	}
+
+	// Freeze panes: freeze rows 1-4 (header) and column A (behavior labels)
+	// This allows scrolling through time slots while keeping headers and behavior names visible
+	f.SetPanes(sheetName, &excelize.Panes{
+		Freeze:      true,
+		Split:       false,
+		XSplit:      1, // Freeze after column A
+		YSplit:      4, // Freeze after row 4
+		TopLeftCell: "B5",
+		ActivePane:  "bottomRight",
+	})
 
 	// Write to buffer
 	buf := new(bytes.Buffer)
