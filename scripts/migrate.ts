@@ -16,19 +16,49 @@ async function migrate() {
   const pool = new Pool({ connectionString: databaseUrl });
 
   try {
+    // Ensure migrations tracking table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS migrations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     // Get all migration files, sorted
     const migrationsDir = join(__dirname, '..', 'migrations');
     const files = readdirSync(migrationsDir)
       .filter(f => f.endsWith('.sql'))
       .sort();
 
-    console.log(`Found ${files.length} migration(s)`);
+    // Get already applied migrations
+    const { rows: appliedRows } = await pool.query('SELECT name FROM migrations');
+    const applied = new Set(appliedRows.map((r: { name: string }) => r.name));
 
-    for (const file of files) {
+    // Filter to pending migrations
+    const pending = files.filter(f => !applied.has(f));
+
+    console.log(`Found ${files.length} migration(s), ${pending.length} pending`);
+
+    for (const file of pending) {
       console.log(`Running: ${file}`);
       const sql = readFileSync(join(migrationsDir, file), 'utf-8');
-      await pool.query(sql);
-      console.log(`  ✓ Complete`);
+      
+      // Run migration in a transaction
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(sql);
+        await client.query('INSERT INTO migrations (name) VALUES ($1)', [file]);
+        await client.query('COMMIT');
+        console.log(`  ✓ Complete`);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`Migration failed in ${file}:`, error);
+        process.exit(1);
+      } finally {
+        client.release();
+      }
     }
 
     console.log('\nAll migrations complete');

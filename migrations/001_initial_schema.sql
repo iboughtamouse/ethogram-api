@@ -59,6 +59,7 @@ CREATE TABLE observations (
 );
 
 COMMENT ON TABLE observations IS 'Behavioral observations of birds in aviaries, supporting multi-subject tracking';
+COMMENT ON COLUMN observations.time_slots IS 'JSONB object structure: {"HH:MM": [subject observations]}';
 
 -- =============================================================================
 -- INDEXES
