@@ -160,6 +160,165 @@ describe('Excel Service', () => {
       expect(cell?.value).toContain('Animal: squirrel');
       expect(cell?.value).toContain('Interaction: watching');
     });
+
+    it('should use "Other" field values when type is "other"', async () => {
+      const dataWithOther = {
+        ...sampleObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_object',
+              location: '5',
+              object: 'other',
+              objectOther: 'Custom toy description',
+            },
+          ],
+          '10:05': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_animal',
+              location: 'G',
+              animal: 'other',
+              animalOther: 'Unknown bird species',
+              interactionType: 'other',
+              interactionTypeOther: 'Mutual observation',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(dataWithOther);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      // Find interacting_object row
+      let objectRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (worksheet?.getCell(row, 1).value === 'Interacting with Inanimate Object (Note Object)') {
+          objectRow = row;
+          break;
+        }
+      }
+
+      const objectCell = worksheet?.getCell(objectRow, 2);
+      expect(objectCell?.value).toContain('Object: Custom toy description');
+
+      // Find interacting_animal row
+      let animalRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (worksheet?.getCell(row, 1).value === 'Interacting with Other Animal (Note Animal & Type of Interaction)') {
+          animalRow = row;
+          break;
+        }
+      }
+
+      const animalCell = worksheet?.getCell(animalRow, 3); // 10:05 is column C
+      expect(animalCell?.value).toContain('Animal: Unknown bird species');
+      expect(animalCell?.value).toContain('Interaction: Mutual observation');
+    });
+
+    it('should include description field in cell content', async () => {
+      const dataWithDescription = {
+        ...sampleObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'other',
+              location: '5',
+              description: 'Unusual wing-stretching behavior',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(dataWithDescription);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      // Find "Other" behavior row
+      let otherRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (worksheet?.getCell(row, 1).value === 'Other') {
+          otherRow = row;
+          break;
+        }
+      }
+
+      const cell = worksheet?.getCell(otherRow, 2);
+      expect(cell?.value).toContain('Description: Unusual wing-stretching behavior');
+    });
+
+    it('should handle midnight crossing for time slots', async () => {
+      const midnightData = {
+        metadata: {
+          observerName: 'Night Observer',
+          date: '2025-11-29',
+          startTime: '23:50',
+          endTime: '00:10',
+          aviary: "Sayyida's Cove",
+          patient: 'Sayyida',
+          mode: 'live' as const,
+        },
+        observations: {
+          '23:50': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              location: '5',
+            },
+          ],
+          '00:05': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'flying',
+            },
+          ],
+        },
+        submittedAt: '2025-11-30T00:15:00.000Z',
+      };
+
+      const workbook = await generateExcelWorkbook(midnightData);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      // Time headers should be relative: 0:00, 0:05, 0:10, 0:15, 0:20
+      expect(worksheet?.getCell('B4').value).toBe('0:00');  // 23:50
+      expect(worksheet?.getCell('C4').value).toBe('0:05');  // 23:55
+      expect(worksheet?.getCell('D4').value).toBe('0:10');  // 00:00
+      expect(worksheet?.getCell('E4').value).toBe('0:15');  // 00:05
+      expect(worksheet?.getCell('F4').value).toBe('0:20');  // 00:10
+
+      // Find flying row and check 00:05 observation is in correct column
+      let flyingRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (worksheet?.getCell(row, 1).value === 'Locomotion - Flying') {
+          flyingRow = row;
+          break;
+        }
+      }
+
+      // 00:05 is the 4th slot (0:15 relative), column E (index 5)
+      expect(worksheet?.getCell(flyingRow, 5).value).toContain('x');
+    });
+
+    it('should handle empty observations gracefully', async () => {
+      const emptyData = {
+        ...sampleObservation,
+        observations: {},
+      };
+
+      const workbook = await generateExcelWorkbook(emptyData);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      // Should still create the workbook with headers
+      expect(worksheet?.getCell('A1').value).toBe('Rehabilitation Raptor Ethogram');
+      // Behavior rows should exist but have no marks
+      expect(worksheet?.getCell('A5').value).toBeDefined();
+    });
   });
 
   describe('generateExcelBuffer', () => {

@@ -221,4 +221,74 @@ describe('POST /api/observations/submit', () => {
     expect(response.statusCode).toBe(201);
     expect(response.json().emailsSent).toBe(0);
   });
+
+  it('preserves all optional observation fields in database', async () => {
+    const payload = {
+      observation: {
+        metadata: {
+          observerName: 'TestObserver',
+          date: '2025-11-29',
+          startTime: '14:00',
+          endTime: '14:30',
+          aviary: "Sayyida's Cove",
+          patient: 'Sayyida',
+          mode: 'live' as const,
+        },
+        observations: {
+          '14:00': {
+            behavior: 'interacting_object',
+            location: '12',
+            notes: 'Playing with toy',
+            object: 'other',
+            objectOther: 'Custom enrichment item',
+          },
+          '14:05': {
+            behavior: 'interacting_animal',
+            location: 'G',
+            notes: '',
+            animal: 'other',
+            animalOther: 'Unknown species',
+            interactionType: 'other',
+            interactionTypeOther: 'Mutual grooming',
+          },
+          '14:10': {
+            behavior: 'other',
+            location: '5',
+            notes: '',
+            description: 'Unusual stretching behavior',
+          },
+        },
+        submittedAt: '2025-11-29T20:00:00.000Z',
+      },
+      emails: ['test@example.com'],
+    };
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    const result = await query<{ time_slots: Record<string, unknown[]> }>(
+      'SELECT time_slots FROM observations'
+    );
+
+    const timeSlots = result.rows[0]?.time_slots;
+
+    // Check interacting_object fields
+    const objectSlot = timeSlots?.['14:00']?.[0] as Record<string, string>;
+    expect(objectSlot.object).toBe('other');
+    expect(objectSlot.objectOther).toBe('Custom enrichment item');
+
+    // Check interacting_animal fields
+    const animalSlot = timeSlots?.['14:05']?.[0] as Record<string, string>;
+    expect(animalSlot.animal).toBe('other');
+    expect(animalSlot.animalOther).toBe('Unknown species');
+    expect(animalSlot.interactionType).toBe('other');
+    expect(animalSlot.interactionTypeOther).toBe('Mutual grooming');
+
+    // Check description field
+    const descSlot = timeSlots?.['14:10']?.[0] as Record<string, string>;
+    expect(descSlot.description).toBe('Unusual stretching behavior');
+  });
 });
