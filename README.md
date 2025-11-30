@@ -4,9 +4,10 @@ Backend API for the WBS Ethogram observation system.
 
 ## Status
 
-✅ **Core endpoint implemented** — `POST /api/observations/submit` accepts and stores observations.
-
-🚧 **In progress** — Excel generation, email sending.
+✅ **Observation storage** — `POST /api/observations/submit` accepts and stores observations  
+✅ **Excel generation** — Service ready, matches frontend format  
+✅ **Email sending** — Resend integration working  
+🚧 **Wiring up** — Connect Excel + Email to submit endpoint
 
 ## Quick Start
 

@@ -49,6 +49,6 @@ This project is **AI-driven, human-assisted**. AI writes all code; humans review
 
 _Updated at the end of each session._
 
-**Last session (Nov 29):** Reset project, established working agreement, scaffolded Fastify + TypeScript project with health endpoint and tests.
+**Last session (Nov 29):** Built Excel generation service (PR #7, merged) and email service (PR #8, open). Both manually tested. Next: wire them up to the observations endpoint.
 
-**Next:** Database connection, POST /api/observations endpoint.
+See `notes/session-log.md` for detailed history.
