@@ -9,6 +9,32 @@ import { config } from '../config.js';
 
 const resend = new Resend(config.resendApiKey);
 
+// --- Sanitization helpers ---
+
+/** Escape HTML entities to prevent XSS in email content */
+function escapeHtml(text: string): string {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return text.replace(/[&<>"']/g, (m) => map[m] ?? m);
+}
+
+/** Remove characters unsafe for filenames */
+function sanitizeFilename(str: string): string {
+  return str.replace(/[^a-zA-Z0-9-_]/g, '_');
+}
+
+/** Remove newlines to prevent email header injection */
+function sanitizeSubject(str: string): string {
+  return str.replace(/[\r\n]/g, '');
+}
+
+// --- Interfaces ---
+
 interface EmailAttachment {
   filename: string;
   content: Buffer;
@@ -87,8 +113,9 @@ export async function sendObservationEmail(
 ): Promise<SendEmailResult> {
   const { to, observerName, date, patient, excelBuffer } = options;
 
-  const filename = `ethogram-${patient}-${date}.xlsx`;
-  const subject = `Ethogram Observation: ${patient} - ${date}`;
+  // Sanitize user input for different contexts
+  const filename = `ethogram-${sanitizeFilename(patient)}-${date}.xlsx`;
+  const subject = sanitizeSubject(`Ethogram Observation: ${patient} - ${date}`);
 
   const text = `
 New ethogram observation submitted.
@@ -102,9 +129,9 @@ The Excel spreadsheet is attached.
 
   const html = `
 <h2>New Ethogram Observation</h2>
-<p><strong>Observer:</strong> ${observerName}</p>
-<p><strong>Patient:</strong> ${patient}</p>
-<p><strong>Date:</strong> ${date}</p>
+<p><strong>Observer:</strong> ${escapeHtml(observerName)}</p>
+<p><strong>Patient:</strong> ${escapeHtml(patient)}</p>
+<p><strong>Date:</strong> ${escapeHtml(date)}</p>
 <p>The Excel spreadsheet is attached.</p>
 `.trim();
 

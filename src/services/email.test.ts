@@ -172,5 +172,39 @@ describe('Email Service', () => {
       expect(callArgs.html).toContain('<h2>New Ethogram Observation</h2>');
       expect(callArgs.html).toContain('Jane Doe');
     });
+
+    it('should sanitize special characters in user input', async () => {
+      mockSend.mockResolvedValueOnce({
+        data: { id: 'msg-safe' },
+        error: null,
+      });
+
+      await sendObservationEmail({
+        to: ['test@example.com'],
+        observerName: '<script>alert("xss")</script>',
+        date: '2025-11-29',
+        patient: 'Test/Patient\nInjection',
+        excelBuffer,
+      });
+
+      const callArgs = mockSend.mock.calls[0]?.[0] as {
+        subject: string;
+        html: string;
+        attachments: { filename: string }[];
+      };
+      const filename = callArgs.attachments[0]?.filename;
+
+      // HTML should escape script tags
+      expect(callArgs.html).not.toContain('<script>');
+      expect(callArgs.html).toContain('&lt;script&gt;');
+
+      // Subject should not contain newlines (header injection)
+      expect(callArgs.subject).not.toContain('\n');
+
+      // Filename should sanitize special characters
+      expect(filename).not.toContain('/');
+      expect(filename).not.toContain('\n');
+      expect(filename).toBe('ethogram-Test_Patient_Injection-2025-11-29.xlsx');
+    });
   });
 });
