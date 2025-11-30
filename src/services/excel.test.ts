@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateExcelWorkbook, generateExcelBuffer } from './excel.js';
 
+// Test data uses database format: observations are arrays of subject observations
 const sampleObservation = {
   metadata: {
     observerName: 'Test Observer',
@@ -12,29 +13,49 @@ const sampleObservation = {
     mode: 'live' as const,
   },
   observations: {
-    '10:00': {
-      behavior: 'resting_alert',
-      location: '5',
-      notes: 'Looking around',
-    },
-    '10:05': {
-      behavior: 'preening',
-      location: '5',
-    },
-    '10:10': {
-      behavior: 'flying',
-    },
-    '10:15': {
-      behavior: 'interacting_object',
-      location: '12',
-      object: 'enrichment_toy',
-    },
-    '10:20': {
-      behavior: 'interacting_animal',
-      location: 'G',
-      animal: 'squirrel',
-      interactionType: 'watching',
-    },
+    '10:00': [
+      {
+        subjectType: 'foster_parent' as const,
+        subjectId: 'Sayyida',
+        behavior: 'resting_alert',
+        location: '5',
+        notes: 'Looking around',
+      },
+    ],
+    '10:05': [
+      {
+        subjectType: 'foster_parent' as const,
+        subjectId: 'Sayyida',
+        behavior: 'preening',
+        location: '5',
+      },
+    ],
+    '10:10': [
+      {
+        subjectType: 'foster_parent' as const,
+        subjectId: 'Sayyida',
+        behavior: 'flying',
+      },
+    ],
+    '10:15': [
+      {
+        subjectType: 'foster_parent' as const,
+        subjectId: 'Sayyida',
+        behavior: 'interacting_object',
+        location: '12',
+        object: 'enrichment_toy',
+      },
+    ],
+    '10:20': [
+      {
+        subjectType: 'foster_parent' as const,
+        subjectId: 'Sayyida',
+        behavior: 'interacting_animal',
+        location: 'G',
+        animal: 'squirrel',
+        interactionType: 'watching',
+      },
+    ],
   },
   submittedAt: '2025-11-29T15:00:00.000Z',
 };

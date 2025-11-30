@@ -3,6 +3,14 @@
  *
  * Converts observation data to Excel format matching the frontend's ethogram spreadsheet layout.
  * Uses a matrix format where behaviors are rows and time slots are columns.
+ *
+ * IMPORTANT: This service expects the FLAT observation format from the frontend request,
+ * NOT the transformed array format stored in the database.
+ *
+ * Frontend format: { "14:00": { behavior, location, notes, ... } }
+ * Database format: { "14:00": [{ subjectType, subjectId, behavior, ... }] }
+ *
+ * When wiring up the endpoint, pass the original request data to this service.
  */
 
 import ExcelJS from 'exceljs';
@@ -37,7 +45,13 @@ const BEHAVIOR_ROW_MAPPING: Record<string, string> = {
   other: 'Other',
 };
 
-interface Observation {
+/**
+ * Single subject observation within a time slot.
+ * Database stores observations as: { "14:00": [{ subjectType, subjectId, behavior, ... }] }
+ */
+interface SubjectObservation {
+  subjectType: 'foster_parent' | 'baby' | 'juvenile';
+  subjectId: string;
   behavior: string;
   location?: string;
   notes?: string;
@@ -60,9 +74,13 @@ interface Metadata {
   mode: 'live' | 'vod';
 }
 
+/**
+ * Observation data as stored in the database.
+ * observations is keyed by time slot, each containing an array of subject observations.
+ */
 interface ObservationData {
   metadata: Metadata;
-  observations: Record<string, Observation>;
+  observations: Record<string, SubjectObservation[]>;
   submittedAt: string;
 }
 
@@ -125,9 +143,10 @@ function convertToRelativeTime(time: string, startTime: string): string {
 }
 
 /**
- * Formats observation details for a cell
+ * Formats observation details for a cell.
+ * For multi-subject observations, formats each subject's data.
  */
-function formatCellContent(observation: Observation): string {
+function formatCellContent(observation: SubjectObservation): string {
   const parts = ['x'];
 
   if (observation.location) {
@@ -215,10 +234,19 @@ export async function generateExcelWorkbook(
 
     // Check each time slot for this behavior
     timeSlots.forEach((time, timeIndex) => {
-      const observation = observations[time];
-      if (observation && observation.behavior === behaviorValue) {
+      const subjectObservations = observations[time];
+      if (!subjectObservations) return;
+
+      // Find observations matching this behavior (could be multiple subjects)
+      const matchingObs = subjectObservations.filter(
+        (obs) => obs.behavior === behaviorValue
+      );
+
+      if (matchingObs.length > 0) {
         const columnIndex = timeIndex + 2;
-        const cellContent = formatCellContent(observation);
+        // For now, format first matching observation
+        // TODO: Handle multiple subjects with same behavior in same time slot
+        const cellContent = formatCellContent(matchingObs[0]!);
         const cell = worksheet.getCell(rowIndex, columnIndex);
         cell.value = cellContent;
         cell.alignment = { wrapText: true, vertical: 'top' };
