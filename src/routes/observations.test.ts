@@ -1,7 +1,15 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { buildApp } from '../app.js';
 import { query, closePool } from '../db/index.js';
 import type { FastifyInstance } from 'fastify';
+import { sendObservationEmail } from '../services/email.js';
+
+// Mock the email service to avoid hitting real API
+vi.mock('../services/email.js', () => ({
+  sendObservationEmail: vi.fn().mockResolvedValue({ success: true, messageId: 'mock-id' }),
+}));
+
+const mockSendObservationEmail = vi.mocked(sendObservationEmail);
 
 describe('POST /api/observations/submit', () => {
   let app: FastifyInstance;
@@ -14,6 +22,7 @@ describe('POST /api/observations/submit', () => {
   // Clean up observations table before each test
   beforeEach(async () => {
     await query('DELETE FROM observations');
+    vi.clearAllMocks();
   });
 
   // Close pool after all tests
@@ -290,5 +299,73 @@ describe('POST /api/observations/submit', () => {
     // Check description field
     const descSlot = timeSlots?.['14:10']?.[0] as Record<string, string>;
     expect(descSlot.description).toBe('Unusual stretching behavior');
+  });
+
+  it('sends email with Excel attachment when emails provided', async () => {
+    const payload = validBody();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    
+    const body = response.json();
+    expect(body.emailsSent).toBe(1);
+
+    // Verify email service was called with correct params
+    expect(mockSendObservationEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendObservationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: ['test@example.com'],
+        observerName: 'TestObserver',
+        date: '2025-11-29',
+        patient: 'Sayyida',
+        excelBuffer: expect.any(Buffer),
+      })
+    );
+  });
+
+  it('does not send email when no emails provided', async () => {
+    const payload = validBody();
+    delete (payload as { emails?: string[] }).emails;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    
+    const body = response.json();
+    expect(body.emailsSent).toBe(0);
+    expect(mockSendObservationEmail).not.toHaveBeenCalled();
+  });
+
+  it('reports partial success when some emails fail', async () => {
+    // First call succeeds, second fails
+    mockSendObservationEmail
+      .mockResolvedValueOnce({ success: true, messageId: 'msg-1' })
+      .mockResolvedValueOnce({ success: false, error: 'Invalid email' });
+
+    const payload = {
+      ...validBody(),
+      emails: ['good@example.com', 'bad@example.com'],
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    
+    const body = response.json();
+    expect(body.emailsSent).toBe(1); // Only 1 succeeded
+    expect(mockSendObservationEmail).toHaveBeenCalledTimes(2);
   });
 });

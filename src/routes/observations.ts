@@ -1,6 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
+import { generateExcelBuffer } from '../services/excel.js';
+import { sendObservationEmail } from '../services/email.js';
 
 // Helper to validate time string (HH:MM with valid hours/minutes)
 const timeSchema = z.string()
@@ -174,11 +176,43 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Generate Excel and send emails if recipients provided
+      let emailsSent = 0;
+      if (emails && emails.length > 0) {
+        try {
+          const excelBuffer = await generateExcelBuffer({
+            metadata,
+            observations: timeSlots,
+            submittedAt,
+          });
+
+          // Send to each recipient
+          for (const email of emails) {
+            const emailResult = await sendObservationEmail({
+              to: [email],
+              observerName: metadata.observerName,
+              date: metadata.date,
+              patient: metadata.patient,
+              excelBuffer,
+            });
+
+            if (emailResult.success) {
+              emailsSent++;
+            } else {
+              fastify.log.warn({ email, error: emailResult.error }, 'Failed to send email');
+            }
+          }
+        } catch (error) {
+          fastify.log.error(error, 'Failed to generate Excel or send emails');
+          // Don't fail the request - observation is saved, email is best-effort
+        }
+      }
+
       return reply.status(201).send({
         success: true,
         submissionId: id,
         message: 'Observation submitted successfully',
-        emailsSent: emails?.length ?? 0, // TODO: Actually send emails
+        emailsSent,
       });
     } catch (error) {
       fastify.log.error(error, 'Failed to insert observation');
