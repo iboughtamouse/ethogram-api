@@ -193,6 +193,21 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error).toBe('validation');
   });
 
+  it('returns 400 when endTime is before startTime', async () => {
+    const payload = validBody();
+    payload.observation.metadata.startTime = '15:00';
+    payload.observation.metadata.endTime = '14:00'; // Before start
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('validation');
+  });
+
   it('accepts request without emails (download-only submission)', async () => {
     const payload = validBody();
     delete (payload as { emails?: string[] }).emails;

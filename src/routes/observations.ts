@@ -42,7 +42,10 @@ const submitObservationSchema = z.object({
       aviary: z.string(),
       patient: z.string(),
       mode: z.enum(['live', 'vod']),
-    }),
+    }).refine(
+      (data) => data.endTime > data.startTime,
+      { message: 'End time must be after start time', path: ['endTime'] }
+    ),
     observations: z.record(z.string(), observationSchema),
     submittedAt: z.string().datetime(),
   }),
