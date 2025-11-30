@@ -302,13 +302,13 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // POST /api/observations/:id/share - Send Excel copy to user's email
+  // POST /api/observations/:id/share - Send Excel copy to user's email(s)
   fastify.post<{ Params: { id: string } }>('/:id/share', async (request, reply) => {
     const { id } = request.params;
 
     // Validate request body
     const bodySchema = z.object({
-      email: z.string().email('Invalid email address'),
+      emails: z.array(z.string().email()).min(1, 'At least one email required').max(10, 'Maximum 10 emails'),
     });
 
     const parseResult = bodySchema.safeParse(request.body);
@@ -323,7 +323,7 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const { email } = parseResult.data;
+    const { emails } = parseResult.data;
 
     // Check rate limit
     const rateLimitKey = `share:${id}`;
@@ -355,36 +355,54 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { row, metadata } = observation;
 
-      // Generate Excel
+      // Generate Excel once
       const excelBuffer = await generateExcelBuffer({
         metadata,
         observations: row.time_slots,
         submittedAt: row.submitted_at,
       });
 
-      // Send email
-      const emailResult = await sendObservationEmail({
-        to: [email],
-        observerName: metadata.observerName,
-        date: metadata.date,
-        patient: metadata.patient,
-        excelBuffer,
-      });
+      // Send to all recipients
+      let emailsSent = 0;
+      const failures: string[] = [];
 
-      if (!emailResult.success) {
-        fastify.log.error({ email, error: emailResult.error }, 'Failed to send share email');
+      for (const email of emails) {
+        const emailResult = await sendObservationEmail({
+          to: [email],
+          observerName: metadata.observerName,
+          date: metadata.date,
+          patient: metadata.patient,
+          excelBuffer,
+        });
+
+        if (emailResult.success) {
+          emailsSent++;
+        } else {
+          fastify.log.error({ email, error: emailResult.error }, 'Failed to send share email');
+          failures.push(email);
+        }
+      }
+
+      // If all emails failed, return error
+      if (emailsSent === 0) {
         return reply.status(500).send({
           success: false,
           error: {
             code: 'EMAIL_ERROR',
-            message: 'Failed to send email',
+            message: 'Failed to send to any recipients',
           },
         });
       }
 
+      // Partial or full success
+      const message = failures.length > 0
+        ? `Excel sent to ${emailsSent} recipient(s). Failed: ${failures.join(', ')}`
+        : `Excel sent to ${emailsSent} recipient(s)`;
+
       return reply.status(200).send({
         success: true,
-        message: `Excel sent to ${email}`,
+        message,
+        emailsSent,
       });
     } catch (error) {
       fastify.log.error(error, 'Failed to share observation');

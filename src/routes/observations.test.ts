@@ -456,14 +456,15 @@ describe('POST /api/observations/:id/share', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/observations/${id}/share`,
-      payload: { email: 'user@example.com' },
+      payload: { emails: ['user@example.com'] },
     });
 
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
     expect(body.success).toBe(true);
-    expect(body.message).toBe('Excel sent to user@example.com');
+    expect(body.message).toBe('Excel sent to 1 recipient(s)');
+    expect(body.emailsSent).toBe(1);
     expect(mockSendObservationEmail).toHaveBeenCalledTimes(1);
     expect(mockGenerateExcelBuffer).toHaveBeenCalledTimes(1);
   });
@@ -474,7 +475,7 @@ describe('POST /api/observations/:id/share', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/observations/${fakeId}/share`,
-      payload: { email: 'user@example.com' },
+      payload: { emails: ['user@example.com'] },
     });
 
     expect(response.statusCode).toBe(404);
@@ -523,7 +524,7 @@ describe('POST /api/observations/:id/share', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/observations/${id}/share`,
-      payload: { email: 'user@example.com' },
+      payload: { emails: ['user@example.com'] },
     });
 
     expect(response.statusCode).toBe(500);
@@ -544,7 +545,7 @@ describe('POST /api/observations/:id/share', () => {
       const response = await app.inject({
         method: 'POST',
         url: `/api/observations/${id}/share`,
-        payload: { email: 'user@example.com' },
+        payload: { emails: ['user@example.com'] },
       });
       expect(response.statusCode).toBe(200);
     }
@@ -553,7 +554,7 @@ describe('POST /api/observations/:id/share', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/observations/${id}/share`,
-      payload: { email: 'user@example.com' },
+      payload: { emails: ['user@example.com'] },
     });
 
     expect(response.statusCode).toBe(429);
