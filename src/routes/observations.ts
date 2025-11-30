@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 
@@ -34,7 +34,21 @@ const submitObservationSchema = z.object({
   emails: z.array(z.string().email()).min(1).max(10).optional(),
 });
 
-type SubmitObservationBody = z.infer<typeof submitObservationSchema>;
+// Type for transformed subject observation (matches database JSONB structure)
+type SubjectObservation = {
+  subjectType: 'foster_parent' | 'baby' | 'juvenile';
+  subjectId: string;
+  behavior: string;
+  location: string;
+  notes: string;
+  object: string;
+  objectOther: string;
+  animal: string;
+  animalOther: string;
+  interactionType: string;
+  interactionTypeOther: string;
+  description: string;
+};
 
 /**
  * Transform flat observations from frontend to array format for database.
@@ -47,8 +61,8 @@ type SubmitObservationBody = z.infer<typeof submitObservationSchema>;
 function transformObservations(
   flatObservations: Record<string, z.infer<typeof observationSchema>>,
   patient: string
-): Record<string, Array<Record<string, string>>> {
-  const result: Record<string, Array<Record<string, string>>> = {};
+): Record<string, SubjectObservation[]> {
+  const result: Record<string, SubjectObservation[]> = {};
 
   for (const [time, obs] of Object.entries(flatObservations)) {
     result[time] = [
@@ -72,7 +86,7 @@ function transformObservations(
   return result;
 }
 
-export async function observationsRoutes(fastify: FastifyInstance) {
+export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/observations/submit
   fastify.post('/submit', async (request, reply) => {
     // Validate request body
@@ -94,39 +108,48 @@ export async function observationsRoutes(fastify: FastifyInstance) {
     const timeSlots = transformObservations(observation.observations, metadata.patient);
 
     // Insert into database
-    const result = await query<{ id: string }>(
-      `INSERT INTO observations (
-        observer_name,
-        observation_date,
-        start_time,
-        end_time,
-        aviary,
-        mode,
-        time_slots,
-        emails,
-        submitted_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING id`,
-      [
-        metadata.observerName,
-        metadata.date,
-        metadata.startTime,
-        metadata.endTime,
-        metadata.aviary,
-        metadata.mode,
-        JSON.stringify(timeSlots),
-        emails ?? null,
-        submittedAt,
-      ]
-    );
+    try {
+      const result = await query<{ id: string }>(
+        `INSERT INTO observations (
+          observer_name,
+          observation_date,
+          start_time,
+          end_time,
+          aviary,
+          mode,
+          time_slots,
+          emails,
+          submitted_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id`,
+        [
+          metadata.observerName,
+          metadata.date,
+          metadata.startTime,
+          metadata.endTime,
+          metadata.aviary,
+          metadata.mode,
+          JSON.stringify(timeSlots),
+          emails ?? null,
+          submittedAt,
+        ]
+      );
 
-    const id = result.rows[0]?.id;
+      const id = result.rows[0]?.id;
 
-    return reply.status(201).send({
-      success: true,
-      submissionId: id,
-      message: 'Observation submitted successfully',
-      emailsSent: emails?.length ?? 0, // TODO: Actually send emails
-    });
+      return reply.status(201).send({
+        success: true,
+        submissionId: id,
+        message: 'Observation submitted successfully',
+        emailsSent: emails?.length ?? 0, // TODO: Actually send emails
+      });
+    } catch (error) {
+      fastify.log.error(error, 'Failed to insert observation');
+      return reply.status(500).send({
+        success: false,
+        error: 'database',
+        message: 'Failed to save observation',
+      });
+    }
   });
-}
+};
