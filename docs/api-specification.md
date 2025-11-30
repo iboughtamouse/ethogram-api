@@ -4,6 +4,8 @@
 **Last Updated:** November 24, 2025
 **Status:** Draft - Phase 2 Implementation Ready
 
+> ⚠️ **Note:** This is a planning document written before implementation. The actual stack is Node.js/TypeScript/Fastify (not Go/Gin). For current state, see `README.md` and `notes/session-log.md`. The code and tests are the source of truth.
+
 ---
 
 ## Table of Contents
