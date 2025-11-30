@@ -219,6 +219,40 @@ describe('Excel Service', () => {
       expect(animalCell?.value).toContain('Interaction: Mutual observation');
     });
 
+    it('should fallback to "other" when otherField is missing', async () => {
+      const dataWithMissingOther = {
+        ...sampleObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_object',
+              location: '5',
+              object: 'other',
+              // objectOther is missing
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(dataWithMissingOther);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      let objectRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (worksheet?.getCell(row, 1).value === 'Interacting with Inanimate Object (Note Object)') {
+          objectRow = row;
+          break;
+        }
+      }
+
+      const cell = worksheet?.getCell(objectRow, 2);
+      // Should fallback to 'other' instead of showing 'undefined'
+      expect(cell?.value).toContain('Object: other');
+      expect(cell?.value).not.toContain('undefined');
+    });
+
     it('should include description field in cell content', async () => {
       const dataWithDescription = {
         ...sampleObservation,

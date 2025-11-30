@@ -4,13 +4,11 @@
  * Converts observation data to Excel format matching the frontend's ethogram spreadsheet layout.
  * Uses a matrix format where behaviors are rows and time slots are columns.
  *
- * IMPORTANT: This service expects the FLAT observation format from the frontend request,
- * NOT the transformed array format stored in the database.
+ * This service expects the DATABASE observation format:
+ * { "14:00": [{ subjectType, subjectId, behavior, location, ... }] }
  *
- * Frontend format: { "14:00": { behavior, location, notes, ... } }
- * Database format: { "14:00": [{ subjectType, subjectId, behavior, ... }] }
- *
- * When wiring up the endpoint, pass the original request data to this service.
+ * Currently handles single-subject observations (takes first in array).
+ * Multi-subject support will be added when the frontend supports it.
  */
 
 import ExcelJS from 'exceljs';
@@ -156,7 +154,7 @@ function formatCellContent(observation: SubjectObservation): string {
   if (observation.object) {
     const objectValue =
       observation.object === 'other'
-        ? observation.objectOther
+        ? (observation.objectOther || 'other')
         : observation.object;
     parts.push(`Object: ${objectValue}`);
   }
@@ -164,7 +162,7 @@ function formatCellContent(observation: SubjectObservation): string {
   if (observation.animal) {
     const animalValue =
       observation.animal === 'other'
-        ? observation.animalOther
+        ? (observation.animalOther || 'other')
         : observation.animal;
     parts.push(`Animal: ${animalValue}`);
   }
@@ -172,7 +170,7 @@ function formatCellContent(observation: SubjectObservation): string {
   if (observation.interactionType) {
     const interactionValue =
       observation.interactionType === 'other'
-        ? observation.interactionTypeOther
+        ? (observation.interactionTypeOther || 'other')
         : observation.interactionType;
     parts.push(`Interaction: ${interactionValue}`);
   }
@@ -244,8 +242,8 @@ export async function generateExcelWorkbook(
 
       if (matchingObs.length > 0) {
         const columnIndex = timeIndex + 2;
-        // For now, format first matching observation
-        // TODO: Handle multiple subjects with same behavior in same time slot
+        // Currently single-subject: format first matching observation
+        // Future: combine multiple subjects (e.g., "Sayyida: x\nBaby1: x")
         const cellContent = formatCellContent(matchingObs[0]!);
         const cell = worksheet.getCell(rowIndex, columnIndex);
         cell.value = cellContent;
