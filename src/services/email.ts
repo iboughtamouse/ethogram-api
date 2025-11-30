@@ -6,6 +6,7 @@
 
 import { Resend } from 'resend';
 import { config } from '../config.js';
+import { sanitizeFilename } from '../utils/sanitize.js';
 
 const resend = new Resend(config.resendApiKey);
 
@@ -21,11 +22,6 @@ function escapeHtml(text: string): string {
     "'": '&#039;',
   };
   return text.replace(/[&<>"']/g, (m) => map[m] ?? m);
-}
-
-/** Remove characters unsafe for filenames */
-function sanitizeFilename(str: string): string {
-  return str.replace(/[^a-zA-Z0-9-_]/g, '_');
 }
 
 /** Remove newlines to prevent email header injection */
