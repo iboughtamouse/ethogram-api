@@ -481,6 +481,39 @@ describe('POST /api/observations/:id/share', () => {
     expect(body.error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for missing email field', async () => {
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${id}/share`,
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 500 when email sending fails', async () => {
+    const id = await insertTestObservation();
+    mockSendObservationEmail.mockResolvedValue({ success: false, error: 'SMTP error' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${id}/share`,
+      payload: { email: 'user@example.com' },
+    });
+
+    expect(response.statusCode).toBe(500);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('EMAIL_ERROR');
+  });
+
   // Note: We don't test that requests succeed after the rate limit window expires
   // because that would require either time mocking or waiting an hour.
   // The rate limiter logic is simple enough that testing the limit is sufficient.
@@ -550,5 +583,21 @@ describe('GET /api/observations/:id/excel', () => {
     const body = response.json();
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns 500 when Excel generation fails', async () => {
+    const id = await insertTestObservation();
+    mockGenerateExcelBuffer.mockRejectedValue(new Error('Excel generation failed'));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${id}/excel`,
+    });
+
+    expect(response.statusCode).toBe(500);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('SERVER_ERROR');
   });
 });

@@ -91,7 +91,7 @@ interface ObservationRow {
   submitted_at: string;
 }
 
-// Type for reconstructed metadata (used for Excel generation)
+// Type for reconstructed metadata (used for Excel generation and email)
 interface ObservationMetadata {
   observerName: string;
   date: string;
@@ -122,7 +122,8 @@ async function fetchObservationById(id: string): Promise<{
 
   const row = result.rows[0]!;
 
-  // Extract patient from first time slot's first observation
+  // Extract patient from first time slot's first observation.
+  // Falls back to 'Unknown' if no time slots exist or first slot is empty.
   const firstSlot = Object.values(row.time_slots)[0];
   const firstObs = Array.isArray(firstSlot) ? firstSlot[0] : null;
   const patient = firstObs?.subjectId ?? 'Unknown';
