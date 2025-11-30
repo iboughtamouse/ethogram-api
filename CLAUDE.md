@@ -106,7 +106,6 @@ Noise to skip (with justification):
 |----------|----------|
 | API Specification | `docs/api-specification.md` |
 | Database Schema | `docs/database-schema.md` |
-| Production API | `https://api-production-24be.up.railway.app` |
 | Stack | Node.js, TypeScript, Fastify, PostgreSQL (raw SQL), Zod, Vitest |
 | Hosting | Railway (API + PostgreSQL) |
 | Email | Resend |

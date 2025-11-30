@@ -11,8 +11,6 @@ This is a Node.js/TypeScript REST API for storing and retrieving ethogram observ
 
 **Stack:** Fastify, TypeScript, PostgreSQL (raw SQL via `pg`), Zod, Vitest, Resend, ExcelJS
 
-**Production:** `https://api-production-24be.up.railway.app`
-
 ## Project Structure
 
 See `CLAUDE.md` for full structure. Key directories:

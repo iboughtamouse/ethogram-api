@@ -10,12 +10,6 @@ Backend API for the WBS Ethogram observation system.
 ✅ **Email delivery** — Send observations via Resend  
 ✅ **Share & Download** — Share observations or download Excel directly
 
-## Production
-
-```
-API Base URL: https://api-production-24be.up.railway.app
-```
-
 ## Quick Start (Local Development)
 
 ```bash
