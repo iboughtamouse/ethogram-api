@@ -4,19 +4,26 @@ Backend API for the WBS Ethogram observation system.
 
 ## Status
 
-✅ **Observation storage** — `POST /api/observations/submit` accepts and stores observations  
-✅ **Excel generation** — Service ready, matches frontend format  
-✅ **Email sending** — Resend integration working  
-🚧 **Wiring up** — Connect Excel + Email to submit endpoint
+✅ **Deployed** — Production API live on Railway  
+✅ **Observation storage** — Submit and store behavioral observations  
+✅ **Excel generation** — Automatic Excel file creation  
+✅ **Email delivery** — Send observations via Resend  
+✅ **Share & Download** — Share observations or download Excel directly
 
-## Quick Start
+## Production
+
+```
+API Base URL: https://api-production-24be.up.railway.app
+```
+
+## Quick Start (Local Development)
 
 ```bash
 # Install dependencies
 npm install
 
 # Set up environment
-cp .env.example .env  # Then edit with your Postgres credentials
+cp .env.example .env  # Then edit with your credentials
 
 # Run migrations
 npm run migrate
@@ -25,7 +32,7 @@ npm run migrate
 npm run dev
 
 # Run tests
-npm run test
+npm test
 ```
 
 ## Endpoints
@@ -33,10 +40,12 @@ npm run test
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
-| POST | `/api/observations/submit` | Submit observation session |
+| POST | `/api/observations/submit` | Submit observation, auto-emails Excel |
+| POST | `/api/observations/:id/share` | Email observation to user (rate limited) |
+| GET | `/api/observations/:id/excel` | Download observation as Excel file |
 
 ## Documentation
 
-- [API Specification](docs/api-specification.md)
-- [Database Schema](docs/database-schema.md)
+- [API Specification](docs/api-specification.md) — Full endpoint docs
+- [Database Schema](docs/database-schema.md) — PostgreSQL tables
 - [CLAUDE.md](CLAUDE.md) — AI-human working agreement

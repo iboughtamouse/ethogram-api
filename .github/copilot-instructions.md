@@ -9,24 +9,53 @@ This is a Node.js/TypeScript REST API for storing and retrieving ethogram observ
 - `docs/api-specification.md` — API endpoints and response formats
 - `docs/database-schema.md` — PostgreSQL table definitions
 
-**Stack:** Fastify, TypeScript, PostgreSQL (raw SQL via `pg`), Zod, Vitest
+**Stack:** Fastify, TypeScript, PostgreSQL (raw SQL via `pg`), Zod, Vitest, Resend, ExcelJS
+
+**Production:** `https://api-production-24be.up.railway.app`
 
 ## Project Structure
 
-```
-src/
-  app.ts        — Fastify app builder
-  server.ts     — Entry point
-  config.ts     — Environment config with Zod validation
-  db/           — Database connection pool and query helper
-  routes/       — Route handlers (one file per resource)
-```
+See `CLAUDE.md` for full structure. Key directories:
+
+- `src/routes/` — Route handlers (one file per resource)
+- `src/services/` — Business logic (email, excel)
+- `src/utils/` — Shared utilities (rate limiting, sanitization)
+- `src/db/` — Database connection and query helper
 
 ## Patterns
 
-_This section will grow as the codebase develops. For now, follow the patterns established in existing files._
-
-- Route handlers go in `src/routes/`, one file per resource
-- Tests live next to source files (`*.test.ts`)
-- Use `query()` from `src/db` for database access
+### Routes
+- Each route file exports a Fastify plugin function
 - Validate request bodies with Zod schemas
+- Use `query()` from `src/db` for database access
+
+### Services
+- Pure functions, no Fastify dependencies
+- Mock in tests to avoid external API calls
+
+### Testing
+- Tests live next to source files (`*.test.ts`)
+- Use Vitest's `vi.mock()` for external services
+- Clean up test data in `beforeEach`
+
+### Error Handling
+- Return `{ success: false, error: "message" }` for errors
+- Use appropriate HTTP status codes (400, 404, 429, 500)
+
+## Git Workflow
+
+See `CLAUDE.md` for full conventional commits guide. Quick reference:
+
+```
+<type>(<optional scope>): <description>
+```
+
+**Types:** `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore`
+
+**Rules:**
+- Imperative mood ("add" not "added")
+- No capital, no period
+- Under 72 characters
+
+- **No amending after push** — add new commits for fixes
+- **Squash and merge** PRs to keep main clean

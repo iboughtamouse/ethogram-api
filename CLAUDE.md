@@ -37,18 +37,93 @@ This project is **AI-driven, human-assisted**. AI writes all code; humans review
 - **Tests accompany code.** Every feature includes tests. Tests are required before committing, not before coding.
 - **Tests verify requirements, not implementation.** Write tests that catch unmet requirements, not tests that mirror code structure.
 
+## Git Workflow
+
+### Commits
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>(<optional scope>): <description>
+
+<optional body>
+
+<optional footer>
+```
+
+**Types:**
+- `feat` — adds or removes a feature
+- `fix` — fixes a bug
+- `refactor` — restructures code without changing behavior
+- `test` — adds or corrects tests
+- `docs` — documentation only
+- `build` — build system, dependencies, CI/CD
+- `chore` — miscellaneous (last resort)
+
+**Rules:**
+- Use imperative mood: "add" not "added" or "adds"
+- Don't capitalize the first letter
+- No period at the end
+- Keep the first line under 72 characters
+
+**Examples:**
+```
+feat: add share endpoint for emailing observations
+fix: handle PostgreSQL Date objects in fetch
+test: add coverage for empty email array
+docs: update API spec with new endpoints
+refactor: extract sanitizeFilename to utils
+```
+
+### Pull Requests
+- **Small PRs** — One feature or fix per PR
+- **Copilot review** — Request review, triage feedback (valid vs noise), address valid points
+- **Separate commits for review feedback** — Don't amend; add new commits addressing feedback
+- **Squash at merge** — Keep main history clean
+- **No amending after push** — Once pushed, commits are immutable (preserves review context)
+
+### Review Triage
+Not all automated review comments are worth addressing. Valid feedback includes:
+- Missing test coverage
+- Actual bugs or edge cases
+- Security concerns
+
+Noise to skip (with justification):
+- Style preferences already covered by existing patterns
+- Suggestions that add complexity without clear benefit
+- Comments on intentional design decisions (document why and move on)
+
+## Testing
+
+- **Tests live next to source** — `foo.ts` → `foo.test.ts`
+- **Mock external services** — Don't hit real APIs in tests
+- **Clean test output** — Logger disabled in test mode (`NODE_ENV=test`)
+- **Integration tests use real DB** — Test database, cleaned between runs
+
 ## Project Context
 
 | Resource | Location |
 |----------|----------|
 | API Specification | `docs/api-specification.md` |
 | Database Schema | `docs/database-schema.md` |
+| Production API | `https://api-production-24be.up.railway.app` |
 | Stack | Node.js, TypeScript, Fastify, PostgreSQL (raw SQL), Zod, Vitest |
+| Hosting | Railway (API + PostgreSQL) |
+| Email | Resend |
+
+## Project Structure
+
+```
+src/
+  app.ts           — Fastify app builder
+  server.ts        — Entry point
+  config.ts        — Environment config (Zod validation)
+  db/              — Database connection pool and query helper
+  routes/          — Route handlers (one file per resource)
+  services/        — Business logic (email, excel generation)
+  utils/           — Shared utilities (rate limiting, sanitization)
+```
 
 ## Session Log
 
-_Updated at the end of each session._
-
-**Last session (Nov 29):** Built Excel generation service (PR #7, merged) and email service (PR #8, open). Both manually tested. Next: wire them up to the observations endpoint.
-
-See `notes/session-log.md` for detailed history.
+See `notes/session-log.md` for detailed history (gitignored, local only).
