@@ -381,29 +381,10 @@ describe('POST /api/observations/submit', () => {
     mockGenerateExcelBuffer.mockReset();
     mockGenerateExcelBuffer.mockRejectedValue(new Error('Excel generation failed'));
 
-    const payload = {
-      observation: {
-        metadata: {
-          observerName: 'TestObserver',
-          date: '2024-01-15',
-          startTime: '09:00',
-          endTime: '09:30',
-          patient: 'Crow A',
-          aviary: 'Main',
-          mode: 'live' as const,
-        },
-        observations: {
-          '09:00': { behavior: 'resting', location: '5', notes: '' },
-        },
-        submittedAt: '2024-01-15T09:00:00.000Z',
-      },
-      emails: ['test@example.com'],
-    };
-
     const response = await app.inject({
       method: 'POST',
       url: '/api/observations/submit',
-      payload,
+      payload: validBody(),
     });
 
     expect(response.statusCode).toBe(201);
