@@ -378,6 +378,25 @@ describe('POST /api/observations/submit', () => {
     expect(mockSendObservationEmail).not.toHaveBeenCalled();
   });
 
+  it('does not send email when emails is empty array', async () => {
+    const payload = {
+      ...validBody(),
+      emails: [],
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    
+    const body = response.json();
+    expect(body.emailsSent).toBe(0);
+    expect(mockSendObservationEmail).not.toHaveBeenCalled();
+  });
+
   it('reports partial success when some emails fail', async () => {
     // First call succeeds, second fails
     mockSendObservationEmail

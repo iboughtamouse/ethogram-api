@@ -6,7 +6,7 @@ import { observationsRoutes } from './routes/observations.js';
 
 export async function buildApp() {
   const app = Fastify({
-    logger: true,
+    logger: process.env.NODE_ENV !== 'test',
   });
 
   // CORS
