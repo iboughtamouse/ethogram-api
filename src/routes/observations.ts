@@ -111,11 +111,19 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
     const parseResult = submitObservationSchema.safeParse(request.body);
 
     if (!parseResult.success) {
+      // Transform Zod errors to spec format
+      const fieldErrors = parseResult.error.flatten().fieldErrors;
+      const details = Object.entries(fieldErrors).flatMap(([field, messages]) =>
+        (messages ?? []).map((message) => ({ field, message }))
+      );
+
       return reply.status(400).send({
         success: false,
-        error: 'validation',
-        message: 'Invalid request body',
-        errors: parseResult.error.flatten().fieldErrors,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Validation failed',
+          details,
+        },
       });
     }
 
@@ -159,8 +167,10 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error('Failed to retrieve submission ID after insert');
         return reply.status(500).send({
           success: false,
-          error: 'database',
-          message: 'Failed to save observation',
+          error: {
+            code: 'DATABASE_ERROR',
+            message: 'Failed to save observation',
+          },
         });
       }
 
@@ -174,8 +184,10 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.log.error(error, 'Failed to insert observation');
       return reply.status(500).send({
         success: false,
-        error: 'database',
-        message: 'Failed to save observation',
+        error: {
+          code: 'DATABASE_ERROR',
+          message: 'Failed to save observation',
+        },
       });
     }
   });

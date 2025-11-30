@@ -148,7 +148,7 @@ describe('POST /api/observations/submit', () => {
 
     const body = response.json();
     expect(body.success).toBe(false);
-    expect(body.error).toBe('validation');
+    expect(body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('returns 400 for invalid observerName length', async () => {
@@ -162,7 +162,7 @@ describe('POST /api/observations/submit', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe('validation');
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
   it('returns 400 for invalid date format', async () => {
@@ -176,7 +176,7 @@ describe('POST /api/observations/submit', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe('validation');
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
   it('returns 400 for invalid time format', async () => {
@@ -190,7 +190,7 @@ describe('POST /api/observations/submit', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe('validation');
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
   it('returns 400 when endTime is before startTime', async () => {
@@ -205,7 +205,7 @@ describe('POST /api/observations/submit', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toBe('validation');
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
   it('accepts request without emails (download-only submission)', async () => {
