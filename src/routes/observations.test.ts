@@ -3,13 +3,20 @@ import { buildApp } from '../app.js';
 import { query, closePool } from '../db/index.js';
 import type { FastifyInstance } from 'fastify';
 import { sendObservationEmail } from '../services/email.js';
+import { generateExcelBuffer } from '../services/excel.js';
 
 // Mock the email service to avoid hitting real API
 vi.mock('../services/email.js', () => ({
   sendObservationEmail: vi.fn().mockResolvedValue({ success: true, messageId: 'mock-id' }),
 }));
 
+// Mock the Excel service to avoid running real generation in tests
+vi.mock('../services/excel.js', () => ({
+  generateExcelBuffer: vi.fn().mockResolvedValue(Buffer.from('mock-excel-data')),
+}));
+
 const mockSendObservationEmail = vi.mocked(sendObservationEmail);
+const mockGenerateExcelBuffer = vi.mocked(generateExcelBuffer);
 
 describe('POST /api/observations/submit', () => {
   let app: FastifyInstance;
@@ -367,5 +374,42 @@ describe('POST /api/observations/submit', () => {
     const body = response.json();
     expect(body.emailsSent).toBe(1); // Only 1 succeeded
     expect(mockSendObservationEmail).toHaveBeenCalledTimes(2);
+  });
+
+  it('succeeds even when Excel generation fails', async () => {
+    // Reset to default success mock first, then override for this test
+    mockGenerateExcelBuffer.mockReset();
+    mockGenerateExcelBuffer.mockRejectedValue(new Error('Excel generation failed'));
+
+    const payload = {
+      observation: {
+        metadata: {
+          observerName: 'TestObserver',
+          date: '2024-01-15',
+          startTime: '09:00',
+          endTime: '09:30',
+          patient: 'Crow A',
+          aviary: 'Main',
+          mode: 'live' as const,
+        },
+        observations: {
+          '09:00': { behavior: 'resting', location: '5', notes: '' },
+        },
+        submittedAt: '2024-01-15T09:00:00.000Z',
+      },
+      emails: ['test@example.com'],
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    
+    const body = response.json();
+    expect(body.emailsSent).toBe(0); // No emails sent when Excel fails
+    expect(mockSendObservationEmail).not.toHaveBeenCalled();
   });
 });
