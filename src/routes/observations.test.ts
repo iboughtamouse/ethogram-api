@@ -66,7 +66,7 @@ describe('POST /api/observations/submit', () => {
     expect(body.message).toBe('Observation submitted successfully');
   });
 
-  it('inserts data into the database', async () => {
+  it('inserts data into the database with all fields', async () => {
     const payload = validBody();
 
     await app.inject({
@@ -75,13 +75,25 @@ describe('POST /api/observations/submit', () => {
       payload,
     });
 
-    const result = await query<{ observer_name: string; aviary: string }>(
-      'SELECT observer_name, aviary FROM observations'
-    );
+    const result = await query<{
+      observer_name: string;
+      aviary: string;
+      observation_date: string;
+      start_time: string;
+      end_time: string;
+      mode: string;
+      emails: string[];
+      time_slots: Record<string, unknown[]>;
+    }>('SELECT observer_name, aviary, observation_date, start_time, end_time, mode, emails, time_slots FROM observations');
 
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.observer_name).toBe('TestObserver');
-    expect(result.rows[0]?.aviary).toBe("Sayyida's Cove");
+    const row = result.rows[0]!;
+    expect(row.observer_name).toBe('TestObserver');
+    expect(row.aviary).toBe("Sayyida's Cove");
+    expect(row.mode).toBe('live');
+    expect(row.emails).toEqual(['test@example.com']);
+    expect(row.time_slots).toBeDefined();
+    expect(Object.keys(row.time_slots)).toContain('14:00');
   });
 
   it('transforms observations to array format with subject info', async () => {
@@ -142,6 +154,34 @@ describe('POST /api/observations/submit', () => {
   it('returns 400 for invalid observerName length', async () => {
     const payload = validBody();
     payload.observation.metadata.observerName = 'A'; // Too short (min 2)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('validation');
+  });
+
+  it('returns 400 for invalid date format', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-13-99'; // Invalid month and day
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('validation');
+  });
+
+  it('returns 400 for invalid time format', async () => {
+    const payload = validBody();
+    payload.observation.metadata.startTime = '25:60'; // Invalid hours and minutes
 
     const response = await app.inject({
       method: 'POST',

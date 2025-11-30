@@ -2,6 +2,16 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 
+// Helper to validate time string (HH:MM with valid hours/minutes)
+const timeSchema = z.string()
+  .regex(/^\d{2}:\d{2}$/, 'Time must be in HH:MM format')
+  .refine((val) => {
+    const parts = val.split(':').map(Number);
+    const h = parts[0] ?? -1;
+    const m = parts[1] ?? -1;
+    return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+  }, { message: 'Invalid time: hours must be 00-23, minutes must be 00-59' });
+
 // Schema for a single observation (flat structure from frontend)
 const observationSchema = z.object({
   behavior: z.string(),
@@ -21,9 +31,14 @@ const submitObservationSchema = z.object({
   observation: z.object({
     metadata: z.object({
       observerName: z.string().min(2).max(32),
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      startTime: z.string().regex(/^\d{2}:\d{2}$/),
-      endTime: z.string().regex(/^\d{2}:\d{2}$/),
+      date: z.string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
+        .refine(
+          (val) => !isNaN(Date.parse(val)),
+          { message: 'Invalid date' }
+        ),
+      startTime: timeSchema,
+      endTime: timeSchema,
       aviary: z.string(),
       patient: z.string(),
       mode: z.enum(['live', 'vod']),
@@ -31,7 +46,7 @@ const submitObservationSchema = z.object({
     observations: z.record(z.string(), observationSchema),
     submittedAt: z.string().datetime(),
   }),
-  emails: z.array(z.string().email()).min(1).max(10).optional(),
+  emails: z.array(z.string().email()).max(10).optional(),
 });
 
 // Type for transformed subject observation (matches database JSONB structure)
@@ -72,13 +87,13 @@ function transformObservations(
         behavior: obs.behavior,
         location: obs.location,
         notes: obs.notes,
-        object: obs.object ?? '',
-        objectOther: obs.objectOther ?? '',
-        animal: obs.animal ?? '',
-        animalOther: obs.animalOther ?? '',
-        interactionType: obs.interactionType ?? '',
-        interactionTypeOther: obs.interactionTypeOther ?? '',
-        description: obs.description ?? '',
+        object: obs.object,
+        objectOther: obs.objectOther,
+        animal: obs.animal,
+        animalOther: obs.animalOther,
+        interactionType: obs.interactionType,
+        interactionTypeOther: obs.interactionTypeOther,
+        description: obs.description,
       },
     ];
   }
@@ -136,6 +151,15 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       const id = result.rows[0]?.id;
+
+      if (!id) {
+        fastify.log.error('Failed to retrieve submission ID after insert');
+        return reply.status(500).send({
+          success: false,
+          error: 'database',
+          message: 'Failed to save observation',
+        });
+      }
 
       return reply.status(201).send({
         success: true,
