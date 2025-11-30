@@ -83,7 +83,23 @@ interface ObservationData {
 }
 
 /**
- * Generates time slots every 5 minutes between start and end times
+ * Resolves "other" field values, falling back appropriately.
+ * When value is "other", uses the custom otherValue if provided, otherwise "other".
+ */
+function resolveOtherField(
+  value: string | undefined,
+  otherValue: string | undefined
+): string | undefined {
+  if (!value) return undefined;
+  return value === 'other' ? (otherValue || 'other') : value;
+}
+
+/**
+ * Generates time slots every 5 minutes between start and end times.
+ *
+ * @param startTime - Start time in "HH:MM" format (assumes pre-validated input)
+ * @param endTime - End time in "HH:MM" format (assumes pre-validated input)
+ * @returns Array of time slot strings in "HH:MM" format
  */
 function generateTimeSlots(startTime: string, endTime: string): string[] {
   if (!startTime || !endTime) return [];
@@ -141,6 +157,7 @@ function convertToRelativeTime(time: string, startTime: string): string {
 }
 
 /**
+/**
  * Formats observation details for a cell.
  * For multi-subject observations, formats each subject's data.
  */
@@ -151,27 +168,18 @@ function formatCellContent(observation: SubjectObservation): string {
     parts.push(`Loc: ${observation.location}`);
   }
 
-  if (observation.object) {
-    const objectValue =
-      observation.object === 'other'
-        ? (observation.objectOther || 'other')
-        : observation.object;
+  const objectValue = resolveOtherField(observation.object, observation.objectOther);
+  if (objectValue) {
     parts.push(`Object: ${objectValue}`);
   }
 
-  if (observation.animal) {
-    const animalValue =
-      observation.animal === 'other'
-        ? (observation.animalOther || 'other')
-        : observation.animal;
+  const animalValue = resolveOtherField(observation.animal, observation.animalOther);
+  if (animalValue) {
     parts.push(`Animal: ${animalValue}`);
   }
 
-  if (observation.interactionType) {
-    const interactionValue =
-      observation.interactionType === 'other'
-        ? (observation.interactionTypeOther || 'other')
-        : observation.interactionType;
+  const interactionValue = resolveOtherField(observation.interactionType, observation.interactionTypeOther);
+  if (interactionValue) {
     parts.push(`Interaction: ${interactionValue}`);
   }
 
