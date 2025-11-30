@@ -114,7 +114,7 @@ export async function sendObservationEmail(
   const { to, observerName, date, patient, excelBuffer } = options;
 
   // Sanitize user input for different contexts
-  const filename = `ethogram-${sanitizeFilename(patient)}-${date}.xlsx`;
+  const filename = `ethogram-${sanitizeFilename(patient)}-${sanitizeFilename(date)}.xlsx`;
   const subject = sanitizeSubject(`Ethogram Observation: ${patient} - ${date}`);
 
   const text = `
