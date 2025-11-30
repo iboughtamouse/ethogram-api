@@ -1,7 +1,7 @@
 # API Specification - WBS Ethogram Backend
 
 **Version:** 1.0.0
-**Last Updated:** November 24, 2025
+**Last Updated:** November 30, 2025
 **Status:** Draft - Phase 2 Implementation Ready
 
 > ⚠️ **Note:** This is a planning document written before implementation. The actual stack is Node.js/TypeScript/Fastify (not Go/Gin). For current state, see `README.md` and `notes/session-log.md`. The code and tests are the source of truth.
@@ -406,11 +406,121 @@ GET /api/observations/550e8400-e29b-41d4-a716-446655440000
 
 ---
 
+### 4. Share Observation via Email
+
+**Endpoint:** `POST /api/observations/:id/share`
+
+**Purpose:** Send an Excel copy of the observation to a user's email address.
+
+**Authentication:** None required (rate limited instead)
+
+**Rate Limiting:** 3 requests per observation per hour. Uses in-memory rate limiting with sliding window.
+
+**Path Parameters:**
+
+- `:id` - UUID of the observation
+
+**Request Body:**
+
+```json
+{
+  "email": "researcher@example.com"
+}
+```
+
+| Field   | Type   | Required | Constraints                  | Description           |
+| ------- | ------ | -------- | ---------------------------- | --------------------- |
+| `email` | string | Yes      | Valid email format, max 254 chars | Recipient email address |
+
+**Example Request:**
+
+```
+POST /api/observations/550e8400-e29b-41d4-a716-446655440000/share
+Content-Type: application/json
+
+{
+  "email": "researcher@example.com"
+}
+```
+
+**Response (Success):**
+
+```json
+{
+  "success": true,
+  "message": "Observation sent to researcher@example.com"
+}
+```
+
+**Response (Rate Limited):**
+
+```json
+{
+  "success": false,
+  "error": "Rate limit exceeded. Maximum 3 share requests per observation per hour."
+}
+```
+
+**HTTP Status Codes:**
+
+- `200 OK` - Email sent successfully
+- `400 Bad Request` - Invalid email format or missing email field
+- `404 Not Found` - Observation ID doesn't exist
+- `429 Too Many Requests` - Rate limit exceeded
+- `500 Internal Server Error` - Email sending failed
+
+---
+
+### 5. Download Observation as Excel
+
+**Endpoint:** `GET /api/observations/:id/excel`
+
+**Purpose:** Download the observation data as an Excel file.
+
+**Authentication:** None required
+
+**Path Parameters:**
+
+- `:id` - UUID of the observation
+
+**Example Request:**
+
+```
+GET /api/observations/550e8400-e29b-41d4-a716-446655440000/excel
+```
+
+**Response Headers:**
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="ethogram_Alice_2025-11-24.xlsx"
+```
+
+**Response Body:** Binary Excel file data
+
+**Excel File Structure:**
+
+- **Sheet 1: Metadata** - Observer name, date, time range, aviary, mode, babies present
+- **Sheet 2: Observations** - Time slots with behavior, location, notes, interaction details
+
+**HTTP Status Codes:**
+
+- `200 OK` - Excel file generated and returned
+- `404 Not Found` - Observation ID doesn't exist
+- `500 Internal Server Error` - Excel generation failed
+
+**Notes:**
+
+- Filename is sanitized to remove unsafe characters
+- File can be opened directly in Excel, Google Sheets, or any compatible spreadsheet application
+
+---
+
 ## Dashboard & Analytics Endpoints
 
 These endpoints support the research questions identified by WBS staff. All endpoints are **read-only** and publicly accessible.
 
-### 4. Behavior Frequency
+### 6. Behavior Frequency
 
 **Endpoint:** `GET /api/dashboard/behaviors`
 
@@ -472,7 +582,7 @@ GET /api/dashboard/behaviors?aviary=Sayyida%27s+Cove&subjectType=foster_parent&s
 
 ---
 
-### 5. Location Heatmap
+### 7. Location Heatmap
 
 **Endpoint:** `GET /api/dashboard/locations`
 
@@ -511,7 +621,7 @@ GET /api/dashboard/behaviors?aviary=Sayyida%27s+Cove&subjectType=foster_parent&s
 
 ---
 
-### 6. Time-of-Day Patterns
+### 8. Time-of-Day Patterns
 
 **Endpoint:** `GET /api/dashboard/time-patterns`
 
@@ -548,7 +658,7 @@ GET /api/dashboard/behaviors?aviary=Sayyida%27s+Cove&subjectType=foster_parent&s
 
 ---
 
-### 7. Enrichment Engagement
+### 9. Enrichment Engagement
 
 **Endpoint:** `GET /api/dashboard/enrichment`
 
@@ -590,7 +700,7 @@ GET /api/dashboard/behaviors?aviary=Sayyida%27s+Cove&subjectType=foster_parent&s
 
 ---
 
-### 8. Aggression Rate by Population Density
+### 10. Aggression Rate by Population Density
 
 **Endpoint:** `GET /api/dashboard/aggression`
 
@@ -642,7 +752,7 @@ GET /api/dashboard/behaviors?aviary=Sayyida%27s+Cove&subjectType=foster_parent&s
 
 ---
 
-### 9. Foster Parent Presence
+### 11. Foster Parent Presence
 
 **Endpoint:** `GET /api/dashboard/foster-parent`
 
@@ -692,7 +802,7 @@ GET /api/dashboard/behaviors?aviary=Sayyida%27s+Cove&subjectType=foster_parent&s
 
 ---
 
-### 10. Leaderboard (Phase 3+)
+### 12. Leaderboard (Phase 3+)
 
 **Endpoint:** `GET /api/dashboard/leaderboard`
 
