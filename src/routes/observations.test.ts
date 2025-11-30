@@ -4,6 +4,7 @@ import { query, closePool } from '../db/index.js';
 import type { FastifyInstance } from 'fastify';
 import { sendObservationEmail } from '../services/email.js';
 import { generateExcelBuffer } from '../services/excel.js';
+import { clearAllRateLimits } from '../utils/rateLimit.js';
 
 // Mock the email service to avoid hitting real API
 vi.mock('../services/email.js', () => ({
@@ -18,53 +19,78 @@ vi.mock('../services/excel.js', () => ({
 const mockSendObservationEmail = vi.mocked(sendObservationEmail);
 const mockGenerateExcelBuffer = vi.mocked(generateExcelBuffer);
 
+// Single app instance for all tests
+let app: FastifyInstance;
+
+// Setup/teardown for entire file
+beforeAll(async () => {
+  app = await buildApp();
+});
+
+afterAll(async () => {
+  await app.close();
+  await closePool();
+});
+
+// Helper to create a valid request body
+const validBody = () => ({
+  observation: {
+    metadata: {
+      observerName: 'TestObserver',
+      date: '2025-11-29',
+      startTime: '14:00',
+      endTime: '14:30',
+      aviary: "Sayyida's Cove",
+      patient: 'Sayyida',
+      mode: 'live' as const,
+    },
+    observations: {
+      '14:00': {
+        behavior: 'resting_alert',
+        location: '12',
+        notes: 'Test observation',
+      },
+      '14:05': {
+        behavior: 'flying',
+        location: '',
+        notes: '',
+      },
+    },
+    submittedAt: '2025-11-29T20:00:00.000Z',
+  },
+  emails: ['test@example.com'],
+});
+
+// Helper to insert a test observation and return its ID
+const insertTestObservation = async (): Promise<string> => {
+  const result = await query<{ id: string }>(
+    `INSERT INTO observations (
+      observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [
+      'TestObserver',
+      '2025-11-29',
+      '14:00',
+      '14:30',
+      'Test Aviary',
+      'live',
+      JSON.stringify({
+        '14:00': [{ subjectType: 'foster_parent', subjectId: 'Sayyida', behavior: 'resting', location: '5', notes: '' }],
+      }),
+      '2025-11-29T20:00:00.000Z',
+    ]
+  );
+  return result.rows[0]!.id;
+};
+
 describe('POST /api/observations/submit', () => {
-  let app: FastifyInstance;
-
-  // Build app before all tests
-  beforeAll(async () => {
-    app = await buildApp();
-  });
-
   // Clean up observations table before each test
   beforeEach(async () => {
     await query('DELETE FROM observations');
     vi.clearAllMocks();
-  });
-
-  // Close pool after all tests
-  afterAll(async () => {
-    await app.close();
-    await closePool();
-  });
-
-  // Helper to create a valid request body
-  const validBody = () => ({
-    observation: {
-      metadata: {
-        observerName: 'TestObserver',
-        date: '2025-11-29',
-        startTime: '14:00',
-        endTime: '14:30',
-        aviary: "Sayyida's Cove",
-        patient: 'Sayyida',
-        mode: 'live' as const,
-      },
-      observations: {
-        '14:00': {
-          behavior: 'resting_alert',
-          location: '12',
-          notes: 'Test observation',
-        },
-        '14:05': {
-          behavior: 'flying',
-          location: '',
-          notes: '',
-        },
-      },
-      submittedAt: '2025-11-29T20:00:00.000Z',
-    },
-    emails: ['test@example.com'],
+    // Reset mocks to default success behavior
+    mockGenerateExcelBuffer.mockResolvedValue(Buffer.from('mock-excel-data'));
+    mockSendObservationEmail.mockResolvedValue({ success: true, messageId: 'mock-id' });
   });
 
   it('returns 201 and submission ID for valid request', async () => {
@@ -392,5 +418,137 @@ describe('POST /api/observations/submit', () => {
     const body = response.json();
     expect(body.emailsSent).toBe(0); // No emails sent when Excel fails
     expect(mockSendObservationEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/observations/:id/share', () => {
+  beforeEach(async () => {
+    await query('DELETE FROM observations');
+    vi.clearAllMocks();
+    clearAllRateLimits();
+    // Reset mocks to default success behavior
+    mockGenerateExcelBuffer.mockResolvedValue(Buffer.from('mock-excel-data'));
+    mockSendObservationEmail.mockResolvedValue({ success: true, messageId: 'mock-id' });
+  });
+
+  it('sends email with Excel attachment for valid request', async () => {
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${id}/share`,
+      payload: { email: 'user@example.com' },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.success).toBe(true);
+    expect(body.message).toBe('Excel sent to user@example.com');
+    expect(mockSendObservationEmail).toHaveBeenCalledTimes(1);
+    expect(mockGenerateExcelBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 404 for non-existent observation', async () => {
+    const fakeId = '00000000-0000-0000-0000-000000000000';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${fakeId}/share`,
+      payload: { email: 'user@example.com' },
+    });
+
+    expect(response.statusCode).toBe(404);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns 400 for invalid email', async () => {
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${id}/share`,
+      payload: { email: 'not-an-email' },
+    });
+
+    expect(response.statusCode).toBe(400);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  // Note: We don't test that requests succeed after the rate limit window expires
+  // because that would require either time mocking or waiting an hour.
+  // The rate limiter logic is simple enough that testing the limit is sufficient.
+  it('returns 429 after exceeding rate limit', async () => {
+    const id = await insertTestObservation();
+
+    // Make 3 requests (the limit)
+    for (let i = 0; i < 3; i++) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/observations/${id}/share`,
+        payload: { email: 'user@example.com' },
+      });
+      expect(response.statusCode).toBe(200);
+    }
+
+    // 4th request should be rate limited
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${id}/share`,
+      payload: { email: 'user@example.com' },
+    });
+
+    expect(response.statusCode).toBe(429);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+  });
+});
+
+describe('GET /api/observations/:id/excel', () => {
+  beforeEach(async () => {
+    await query('DELETE FROM observations');
+    vi.clearAllMocks();
+    // Reset mocks to default success behavior
+    mockGenerateExcelBuffer.mockResolvedValue(Buffer.from('mock-excel-data'));
+  });
+
+  it('returns Excel file for valid observation', async () => {
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${id}/excel`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    expect(response.headers['content-disposition']).toContain('attachment');
+    expect(response.headers['content-disposition']).toContain('.xlsx');
+    expect(mockGenerateExcelBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 404 for non-existent observation', async () => {
+    const fakeId = '00000000-0000-0000-0000-000000000000';
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${fakeId}/excel`,
+    });
+
+    expect(response.statusCode).toBe(404);
+
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('NOT_FOUND');
   });
 });

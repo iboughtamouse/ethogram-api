@@ -3,6 +3,14 @@ import { z } from 'zod';
 import { query } from '../db/index.js';
 import { generateExcelBuffer } from '../services/excel.js';
 import { sendObservationEmail } from '../services/email.js';
+import { checkRateLimit } from '../utils/rateLimit.js';
+import { sanitizeFilename } from '../utils/sanitize.js';
+
+// Rate limit config for share endpoint: 3 requests per observation per hour
+const SHARE_RATE_LIMIT = {
+  maxRequests: 3,
+  windowMs: 60 * 60 * 1000, // 1 hour
+};
 
 // Helper to validate time string (HH:MM with valid hours/minutes)
 const timeSchema = z.string()
@@ -69,6 +77,73 @@ type SubjectObservation = {
   interactionTypeOther: string;
   description: string;
 };
+
+// Type for observation row from database
+interface ObservationRow {
+  id: string;
+  observer_name: string;
+  observation_date: string | Date; // PostgreSQL may return Date object
+  start_time: string;
+  end_time: string;
+  aviary: string;
+  mode: string;
+  time_slots: Record<string, SubjectObservation[]>;
+  submitted_at: string;
+}
+
+// Type for reconstructed metadata (used for Excel generation)
+interface ObservationMetadata {
+  observerName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  aviary: string;
+  patient: string;
+  mode: 'live' | 'vod';
+}
+
+/**
+ * Fetch an observation by ID and reconstruct its metadata.
+ * Returns null if not found.
+ */
+async function fetchObservationById(id: string): Promise<{
+  row: ObservationRow;
+  metadata: ObservationMetadata;
+} | null> {
+  const result = await query<ObservationRow>(
+    `SELECT id, observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at
+     FROM observations WHERE id = $1`,
+    [id]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0]!;
+
+  // Extract patient from first time slot's first observation
+  const firstSlot = Object.values(row.time_slots)[0];
+  const firstObs = Array.isArray(firstSlot) ? firstSlot[0] : null;
+  const patient = firstObs?.subjectId ?? 'Unknown';
+
+  // PostgreSQL returns Date objects for date columns, convert to YYYY-MM-DD string
+  const dateStr = row.observation_date instanceof Date
+    ? row.observation_date.toISOString().split('T')[0]!
+    : String(row.observation_date);
+
+  const metadata: ObservationMetadata = {
+    observerName: row.observer_name,
+    date: dateStr,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    aviary: row.aviary,
+    patient,
+    mode: row.mode as 'live' | 'vod',
+  };
+
+  return { row, metadata };
+}
 
 /**
  * Transform flat observations from frontend to array format for database.
@@ -221,6 +296,147 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
         error: {
           code: 'DATABASE_ERROR',
           message: 'Failed to save observation',
+        },
+      });
+    }
+  });
+
+  // POST /api/observations/:id/share - Send Excel copy to user's email
+  fastify.post<{ Params: { id: string } }>('/:id/share', async (request, reply) => {
+    const { id } = request.params;
+
+    // Validate request body
+    const bodySchema = z.object({
+      email: z.string().email('Invalid email address'),
+    });
+
+    const parseResult = bodySchema.safeParse(request.body);
+    if (!parseResult.success) {
+      const errorMessage = parseResult.error.issues[0]?.message ?? 'Invalid email';
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: errorMessage,
+        },
+      });
+    }
+
+    const { email } = parseResult.data;
+
+    // Check rate limit
+    const rateLimitKey = `share:${id}`;
+    const rateLimit = checkRateLimit(rateLimitKey, SHARE_RATE_LIMIT);
+
+    if (!rateLimit.allowed) {
+      return reply.status(429).send({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many share requests. Try again later.',
+        },
+      });
+    }
+
+    // Fetch observation from database
+    try {
+      const observation = await fetchObservationById(id);
+
+      if (!observation) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Observation not found',
+          },
+        });
+      }
+
+      const { row, metadata } = observation;
+
+      // Generate Excel
+      const excelBuffer = await generateExcelBuffer({
+        metadata,
+        observations: row.time_slots,
+        submittedAt: row.submitted_at,
+      });
+
+      // Send email
+      const emailResult = await sendObservationEmail({
+        to: [email],
+        observerName: metadata.observerName,
+        date: metadata.date,
+        patient: metadata.patient,
+        excelBuffer,
+      });
+
+      if (!emailResult.success) {
+        fastify.log.error({ email, error: emailResult.error }, 'Failed to send share email');
+        return reply.status(500).send({
+          success: false,
+          error: {
+            code: 'EMAIL_ERROR',
+            message: 'Failed to send email',
+          },
+        });
+      }
+
+      return reply.status(200).send({
+        success: true,
+        message: `Excel sent to ${email}`,
+      });
+    } catch (error) {
+      fastify.log.error(error, 'Failed to share observation');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'SERVER_ERROR',
+          message: 'Failed to share observation',
+        },
+      });
+    }
+  });
+
+  // GET /api/observations/:id/excel - Download Excel file
+  fastify.get<{ Params: { id: string } }>('/:id/excel', async (request, reply) => {
+    const { id } = request.params;
+
+    try {
+      const data = await fetchObservationById(id);
+
+      if (!data) {
+        return reply.status(404).send({
+          success: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Observation not found',
+          },
+        });
+      }
+
+      const { row, metadata } = data;
+
+      // Generate Excel
+      const excelBuffer = await generateExcelBuffer({
+        metadata,
+        observations: row.time_slots,
+        submittedAt: row.submitted_at,
+      });
+
+      // Set headers for file download
+      const filename = `ethogram_${sanitizeFilename(metadata.date)}_${sanitizeFilename(metadata.observerName)}.xlsx`;
+
+      return reply
+        .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .header('Content-Disposition', `attachment; filename="${filename}"`)
+        .send(excelBuffer);
+    } catch (error) {
+      fastify.log.error(error, 'Failed to generate Excel');
+      return reply.status(500).send({
+        success: false,
+        error: {
+          code: 'SERVER_ERROR',
+          message: 'Failed to generate Excel',
         },
       });
     }
