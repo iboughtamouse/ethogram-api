@@ -206,8 +206,19 @@ export async function generateExcelWorkbook(
 
   const timeSlots = generateTimeSlots(metadata.startTime, metadata.endTime);
 
+  // Set column widths to match original spreadsheet
+  worksheet.getColumn('A').width = 25.75; // Behavior labels column
+  worksheet.getColumn('B').width = 4.88;  // Time column (relative)
+  // Columns C onwards (time slots) - set width 13.0
+  for (let col = 3; col <= timeSlots.length + 1; col++) {
+    worksheet.getColumn(col).width = 13.0;
+  }
+
   // Row 1: Title, Date, Time Window
-  worksheet.getCell('A1').value = 'Rehabilitation Raptor Ethogram';
+  const titleCell = worksheet.getCell('A1');
+  titleCell.value = 'Rehabilitation Raptor Ethogram';
+  titleCell.font = { bold: true };
+  
   worksheet.getCell('B1').value = 'Date:';
   worksheet.getCell('C1').value = metadata.date;
   worksheet.getCell('J1').value = 'Time Window:';
@@ -219,14 +230,18 @@ export async function generateExcelWorkbook(
   worksheet.getCell('J2').value = 'Observer:';
   worksheet.getCell('K2').value = metadata.observerName;
 
-  // Row 3: "Time:" label
-  worksheet.getCell('B3').value = 'Time:';
+  // Row 3: "Time:" label (bold)
+  const timeLabelCell = worksheet.getCell('B3');
+  timeLabelCell.value = 'Time:';
+  timeLabelCell.font = { bold: true };
 
-  // Row 4: Time slot headers (relative format)
+  // Row 4: Time slot headers (relative format) - make bold
   timeSlots.forEach((time, index) => {
     const relativeTime = convertToRelativeTime(time, metadata.startTime);
     const columnIndex = index + 2; // Column B is index 2
-    worksheet.getCell(4, columnIndex).value = relativeTime;
+    const headerCell = worksheet.getCell(4, columnIndex);
+    headerCell.value = relativeTime;
+    headerCell.font = { bold: true };
   });
 
   // Rows 5+: Behavior labels and observation marks
@@ -235,8 +250,10 @@ export async function generateExcelWorkbook(
     const rowIndex = 5 + index;
     const behaviorLabel = BEHAVIOR_ROW_MAPPING[behaviorValue];
 
-    // Column A: Behavior label
-    worksheet.getCell(rowIndex, 1).value = behaviorLabel;
+    // Column A: Behavior label with text wrapping
+    const labelCell = worksheet.getCell(rowIndex, 1);
+    labelCell.value = behaviorLabel;
+    labelCell.alignment = { wrapText: true, vertical: 'top' };
 
     // Check each time slot for this behavior
     timeSlots.forEach((time, timeIndex) => {
@@ -264,6 +281,11 @@ export async function generateExcelWorkbook(
   const commentsRowIndex = 5 + behaviorRows.length + 2;
   worksheet.getCell(commentsRowIndex, 1).value =
     'Comments (Abnormal Environmental Factors, Plant Growth, Etc):';
+
+  // Freeze panes at B5 (freeze top 4 rows and column A)
+  worksheet.views = [
+    { state: 'frozen', xSplit: 1, ySplit: 4, topLeftCell: 'B5' }
+  ];
 
   return workbook;
 }
