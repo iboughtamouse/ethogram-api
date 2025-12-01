@@ -206,13 +206,14 @@ export async function generateExcelWorkbook(
 
   const timeSlots = generateTimeSlots(metadata.startTime, metadata.endTime);
 
-  // Set column widths to match original spreadsheet
-  worksheet.getColumn('A').width = 25.75; // Behavior labels column
-  worksheet.getColumn('B').width = 4.88;  // Time column (relative)
+  // Set column widths for readability
+  worksheet.getColumn('A').width = 35.0;  // Behavior labels column - increased ~35% from 25.75 to reduce wrapping
+  worksheet.getColumn('B').width = 8.0;   // Time column (relative) - increased from 4.88 for readability
   // Columns C onwards (time slots) - set width 13.0
   for (let col = 3; col <= timeSlots.length + 1; col++) {
     worksheet.getColumn(col).width = 13.0;
   }
+  worksheet.getColumn('J').width = 15.0;  // "Time Window:" and "Observer:" labels - wide enough for labels
 
   // Row 1: Title, Date, Time Window
   const titleCell = worksheet.getCell('A1');
@@ -279,8 +280,9 @@ export async function generateExcelWorkbook(
 
   // Add comments section after all behaviors
   const commentsRowIndex = 5 + behaviorRows.length + 2;
-  worksheet.getCell(commentsRowIndex, 1).value =
-    'Comments (Abnormal Environmental Factors, Plant Growth, Etc):';
+  const commentsCell = worksheet.getCell(commentsRowIndex, 1);
+  commentsCell.value = 'Comments (Abnormal Environmental Factors, Plant Growth, Etc):';
+  commentsCell.alignment = { wrapText: true, vertical: 'top' };
 
   // Freeze panes at B5 (freeze top 4 rows and column A)
   worksheet.views = [
