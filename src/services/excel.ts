@@ -220,15 +220,31 @@ export async function generateExcelWorkbook(
   titleCell.value = 'Rehabilitation Raptor Ethogram';
   titleCell.font = { bold: true };
   
-  worksheet.getCell('B1').value = 'Date:';
+  const dateLabel = worksheet.getCell('B1');
+  dateLabel.value = 'Date:';
+  dateLabel.font = { bold: true };
+  
   worksheet.getCell('C1').value = metadata.date;
-  worksheet.getCell('J1').value = 'Time Window:';
+  
+  const timeWindowLabel = worksheet.getCell('J1');
+  timeWindowLabel.value = 'Time Window:';
+  timeWindowLabel.font = { bold: true };
+  
   worksheet.getCell('K1').value = `${metadata.startTime} - ${metadata.endTime}`;
 
   // Row 2: Aviary, Patient, Observer
-  worksheet.getCell('A2').value = `Aviary: ${metadata.aviary}`;
-  worksheet.getCell('B2').value = `Patient(s): ${metadata.patient}`;
-  worksheet.getCell('J2').value = 'Observer:';
+  const aviaryCell = worksheet.getCell('A2');
+  aviaryCell.value = `Aviary: ${metadata.aviary}`;
+  aviaryCell.font = { bold: true };
+  
+  const patientCell = worksheet.getCell('B2');
+  patientCell.value = `Patient(s): ${metadata.patient}`;
+  patientCell.font = { bold: true };
+  
+  const observerLabel = worksheet.getCell('J2');
+  observerLabel.value = 'Observer:';
+  observerLabel.font = { bold: true };
+  
   worksheet.getCell('K2').value = metadata.observerName;
 
   // Row 3: "Time:" label (bold)
