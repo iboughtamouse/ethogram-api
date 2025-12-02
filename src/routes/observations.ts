@@ -37,16 +37,26 @@ const observationSchema = z.object({
 });
 
 // Schema for the full request body
+// Helper to check YYYY-MM-DD is a real calendar date
+const isStrictISODate = (val: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) return false;
+  const [year, month, day] = val.split('-').map(Number);
+  const dt = new Date(`${val}T00:00:00Z`);
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() + 1 === month &&
+    dt.getUTCDate() === day
+  );
+};
+
 const submitObservationSchema = z.object({
   observation: z.object({
     metadata: z.object({
       observerName: z.string().min(2).max(32),
       date: z.string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
-        .refine(
-          (val) => !isNaN(Date.parse(val)),
-          { message: 'Invalid date' }
-        ),
+        .refine((val) => isStrictISODate(val), {
+          message: 'Invalid date',
+        }),
       startTime: timeSchema,
       endTime: timeSchema,
       aviary: z.string(),
@@ -212,7 +222,7 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
     const timeSlots = transformObservations(observation.observations, metadata.patient);
 
     // Insert into database
-    try {
+  try {
       const result = await query<{ id: string }>(
         `INSERT INTO observations (
           observer_name,
@@ -292,6 +302,76 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       });
     } catch (error) {
       fastify.log.error(error, 'Failed to insert observation');
+
+      // Map common Postgres errors to nicer API responses
+      // 22P02: invalid_text_representation (invalid input syntax e.g. for date)
+      // 23514: check_violation (constraint) - use constraint name to map to fields
+      // 23502: not_null_violation (missing column)
+      const pgError = error as any;
+      if (pgError && pgError.code) {
+        // Invalid input syntax (e.g., '99/99/9999' for DATE)
+        if (pgError.code === '22P02') {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Invalid input',
+              details: [
+                {
+                  field: 'date',
+                  message:
+                    'Invalid date format. Please provide YYYY-MM-DD',
+                },
+              ],
+            },
+          });
+        }
+
+        // Constraint violations - check error.constraint to map which field
+        if (pgError.code === '23514' && pgError.constraint) {
+          const constraint = pgError.constraint as string;
+          const details = [] as { field: string; message: string }[];
+          if (constraint === 'valid_date') {
+            details.push({
+              field: 'date',
+              message:
+                'Observation date is outside acceptable range (must be >= 2024-01-01 and <= tomorrow)',
+            });
+          } else if (constraint === 'valid_time_range') {
+            details.push({ field: 'endTime', message: 'End time must be after start time' });
+          }
+
+          if (details.length > 0) {
+            return reply.status(400).send({
+              success: false,
+              error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Validation failed',
+                details,
+              },
+            });
+          }
+        }
+
+        // Not-null violation - return field-level details if available
+        if (pgError.code === '23502' && pgError.column) {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Missing required field',
+              details: [
+                {
+                  field: pgError.column,
+                  message: 'This field is required',
+                },
+              ],
+            },
+          });
+        }
+      }
+
+      // Default fallback to 500 for other failures
       return reply.status(500).send({
         success: false,
         error: {
