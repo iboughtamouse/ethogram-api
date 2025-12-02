@@ -221,6 +221,20 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for DB constraint violation: valid_date (out of range)', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2023-01-01'; // Against valid_date constraint
+
+    const response = await app.inject({ method: 'POST', url: '/api/observations/submit', payload });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(Array.isArray(body.error.details)).toBe(true);
+    expect(body.error.details[0].field).toBe('date');
+  });
+
   it('returns 400 for invalid time format', async () => {
     const payload = validBody();
     payload.observation.metadata.startTime = '25:60'; // Invalid hours and minutes
