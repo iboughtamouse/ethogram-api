@@ -1,0 +1,111 @@
+
+> ethogram-api@1.0.0 test
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv4.0.14 [39m[90m/Users/squidwardtortellini/Projects/ethogram-api[39m
+
+ [32m✓[39m src/db/index.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 213[2mms[22m[39m
+{"level":30,"time":1764500923576,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-1","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923624,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-1","res":{"statusCode":201},"responseTime":47.68619499995839,"msg":"request completed"}
+{"level":30,"time":1764500923653,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-2","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923661,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-2","res":{"statusCode":201},"responseTime":4.515070000081323,"msg":"request completed"}
+{"level":30,"time":1764500923699,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-3","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923703,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-3","res":{"statusCode":201},"responseTime":3.2267599999904633,"msg":"request completed"}
+{"level":30,"time":1764500923710,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-4","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923713,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-4","res":{"statusCode":400},"responseTime":3.3749270000262186,"msg":"request completed"}
+{"level":30,"time":1764500923717,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-5","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923719,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-5","res":{"statusCode":400},"responseTime":1.6735430000117049,"msg":"request completed"}
+{"level":30,"time":1764500923758,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-6","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923761,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-6","res":{"statusCode":400},"responseTime":3.2988139999797568,"msg":"request completed"}
+ [32m✓[39m src/services/excel.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 271[2mms[22m[39m
+{"level":30,"time":1764500923784,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-7","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923786,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-7","res":{"statusCode":400},"responseTime":2.0084229999920353,"msg":"request completed"}
+{"level":30,"time":1764500923949,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-8","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923951,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-8","res":{"statusCode":400},"responseTime":1.2571260000113398,"msg":"request completed"}
+{"level":30,"time":1764500923955,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-9","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923960,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-9","res":{"statusCode":201},"responseTime":5.719714000006206,"msg":"request completed"}
+{"level":30,"time":1764500923964,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-a","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500923967,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-a","res":{"statusCode":201},"responseTime":2.8120929999276996,"msg":"request completed"}
+{"level":30,"time":1764500923970,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-b","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924050,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-b","res":{"statusCode":201},"responseTime":76.41780799999833,"msg":"request completed"}
+{"level":30,"time":1764500924060,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-c","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924063,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-c","res":{"statusCode":201},"responseTime":3.511134000029415,"msg":"request completed"}
+{"level":30,"time":1764500924066,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-d","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":40,"time":1764500924071,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","email":"bad@example.com","error":"Invalid email","msg":"Failed to send email"}
+{"level":30,"time":1764500924072,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-d","res":{"statusCode":201},"responseTime":5.2654480000492185,"msg":"request completed"}
+{"level":30,"time":1764500924201,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-e","req":{"method":"POST","url":"/api/observations/submit","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":50,"time":1764500924209,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","err":{"type":"Error","message":"Excel generation failed","stack":"Error: Excel generation failed\n    at /Users/squidwardtortellini/Projects/ethogram-api/src/routes/observations.test.ts:408:47\n    at file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/@vitest/runner/dist/index.js:145:11\n    at file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/@vitest/runner/dist/index.js:919:26\n    at file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/@vitest/runner/dist/index.js:1244:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/@vitest/runner/dist/index.js:1210:10)\n    at file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/@vitest/runner/dist/index.js:1654:37\n    at Traces.$ (file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/vitest/dist/chunks/traces.U4xDYhzZ.js:115:27)\n    at trace (file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/vitest/dist/chunks/test.DqQZzsWf.js:234:21)\n    at runTest (file:///Users/squidwardtortellini/Projects/ethogram-api/node_modules/@vitest/runner/dist/index.js:1654:12)"},"msg":"Failed to generate Excel or send emails"}
+{"level":30,"time":1764500924216,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-e","res":{"statusCode":201},"responseTime":14.929107000003569,"msg":"request completed"}
+{"level":30,"time":1764500924248,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-f","req":{"method":"POST","url":"/api/observations/53417872-eb1c-4dc6-8090-1814bfda7ef8/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924251,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-f","res":{"statusCode":200},"responseTime":2.9924380000447854,"msg":"request completed"}
+{"level":30,"time":1764500924253,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-g","req":{"method":"POST","url":"/api/observations/00000000-0000-0000-0000-000000000000/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924256,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-g","res":{"statusCode":404},"responseTime":2.0535809999564663,"msg":"request completed"}
+{"level":30,"time":1764500924260,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-h","req":{"method":"POST","url":"/api/observations/1570c05a-3b57-4162-a4e1-a37e6f4a725c/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924263,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-h","res":{"statusCode":400},"err":{"type":"TypeError","message":"Cannot read properties of undefined (reading '0')","stack":"TypeError: Cannot read properties of undefined (reading '0')\n    at Object.<anonymous> (/Users/squidwardtortellini/Projects/ethogram-api/src/routes/observations.ts:251:38)\n    at preHandlerCallbackInner (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/handle-request.js:157:24)\n    at preHandlerCallback (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/handle-request.js:125:5)\n    at validationCompleted (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/handle-request.js:115:5)\n    at preValidationCallback (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/handle-request.js:92:5)\n    at handler (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/handle-request.js:69:7)\n    at onDone (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/content-type-parser.js:219:5)\n    at AsyncResource.runInAsyncScope (node:async_hooks:214:14)\n    at bound (node:async_hooks:245:16)\n    at Parser.defaultJsonParser [as fn] (/Users/squidwardtortellini/Projects/ethogram-api/node_modules/fastify/lib/content-type-parser.js:307:7)"},"msg":"Cannot read properties of undefined (reading '0')"}
+{"level":30,"time":1764500924265,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-h","res":{"statusCode":400},"responseTime":4.860173000022769,"msg":"request completed"}
+{"level":30,"time":1764500924298,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-i","req":{"method":"POST","url":"/api/observations/399e2df4-a643-4fce-b7ae-0a31e33da772/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924300,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-i","res":{"statusCode":200},"responseTime":2.113584000035189,"msg":"request completed"}
+{"level":30,"time":1764500924301,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-j","req":{"method":"POST","url":"/api/observations/399e2df4-a643-4fce-b7ae-0a31e33da772/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924304,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-j","res":{"statusCode":200},"responseTime":3.2103480000514537,"msg":"request completed"}
+{"level":30,"time":1764500924305,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-k","req":{"method":"POST","url":"/api/observations/399e2df4-a643-4fce-b7ae-0a31e33da772/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924309,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-k","res":{"statusCode":200},"responseTime":3.6678979999851435,"msg":"request completed"}
+{"level":30,"time":1764500924310,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-l","req":{"method":"POST","url":"/api/observations/399e2df4-a643-4fce-b7ae-0a31e33da772/share","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924311,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-l","res":{"statusCode":429},"responseTime":0.9492989999707788,"msg":"request completed"}
+{"level":30,"time":1764500924317,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-m","req":{"method":"GET","url":"/api/observations/3444a470-745e-41cd-92bd-fb3b7dc4e7af/excel","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924320,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-m","res":{"statusCode":200},"responseTime":2.8199920000042766,"msg":"request completed"}
+{"level":30,"time":1764500924322,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-n","req":{"method":"GET","url":"/api/observations/00000000-0000-0000-0000-000000000000/excel","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+{"level":30,"time":1764500924414,"pid":4251,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-n","res":{"statusCode":404},"responseTime":91.84025000000838,"msg":"request completed"}
+ [31m❯[39m src/routes/observations.test.ts [2m([22m[2m20 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1100[2mms[22m[39m
+     [32m✓[39m returns 201 and submission ID for valid request[32m 195[2mms[22m[39m
+     [32m✓[39m inserts data into the database with all fields[32m 48[2mms[22m[39m
+     [32m✓[39m transforms observations to array format with subject info[32m 32[2mms[22m[39m
+     [32m✓[39m returns 400 for missing required fields[32m 6[2mms[22m[39m
+     [32m✓[39m returns 400 for invalid observerName length[32m 5[2mms[22m[39m
+     [32m✓[39m returns 400 for invalid date format[32m 47[2mms[22m[39m
+     [32m✓[39m returns 400 for invalid time format[32m 167[2mms[22m[39m
+     [32m✓[39m returns 400 when endTime is before startTime[32m 17[2mms[22m[39m
+     [32m✓[39m accepts request without emails (download-only submission)[32m 10[2mms[22m[39m
+     [32m✓[39m preserves all optional observation fields in database[32m 7[2mms[22m[39m
+     [32m✓[39m sends email with Excel attachment when emails provided[32m 86[2mms[22m[39m
+     [32m✓[39m does not send email when no emails provided[32m 9[2mms[22m[39m
+     [32m✓[39m reports partial success when some emails fail[32m 8[2mms[22m[39m
+     [32m✓[39m succeeds even when Excel generation fails[32m 144[2mms[22m[39m
+     [32m✓[39m sends email with Excel attachment for valid request[32m 35[2mms[22m[39m
+     [32m✓[39m returns 404 for non-existent observation[32m 6[2mms[22m[39m
+[31m     [31m×[31m returns 400 for invalid email[39m[32m 11[2mms[22m[39m
+     [32m✓[39m returns 429 after exceeding rate limit[32m 44[2mms[22m[39m
+     [32m✓[39m returns Excel file for valid observation[32m 8[2mms[22m[39m
+     [32m✓[39m returns 404 for non-existent observation[32m 94[2mms[22m[39m
+ [32m✓[39m src/services/email.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+{"level":30,"time":1764500925174,"pid":4260,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-1","req":{"method":"GET","url":"/api/health","host":"localhost:80","remoteAddress":"127.0.0.1"},"msg":"incoming request"}
+ [32m✓[39m src/routes/health.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 59[2mms[22m[39m
+{"level":30,"time":1764500925182,"pid":4260,"hostname":"Squidwards-MacBook-Air.local","reqId":"req-1","res":{"statusCode":200},"responseTime":6.183404000010341,"msg":"request completed"}
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m src/routes/observations.test.ts[2m > [22mPOST /api/observations/:id/share[2m > [22mreturns 400 for invalid email
+[31m[1mAssertionError[22m: expected undefined to be false // Object.is equality[39m
+
+[32m- Expected:[39m 
+false
+
+[31m+ Received:[39m 
+undefined
+
+[36m [2m❯[22m src/routes/observations.test.ts:[2m480:26[22m[39m
+    [90m478| [39m
+    [90m479| [39m    [35mconst[39m body [33m=[39m response[33m.[39m[34mjson[39m()[33m;[39m
+    [90m480| [39m    [34mexpect[39m(body[33m.[39msuccess)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m   | [39m                         [31m^[39m
+    [90m481| [39m    [34mexpect[39m(body[33m.[39merror[33m.[39mcode)[33m.[39m[34mtoBe[39m([32m'VALIDATION_ERROR'[39m)[33m;[39m
+    [90m482| [39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m4 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m43 passed[39m[22m[90m (44)[39m
+[2m   Start at [22m 06:08:41
+[2m   Duration [22m 3.24s[2m (transform 497ms, setup 0ms, import 4.19s, tests 1.66s, environment 1ms)[22m
+
