@@ -91,7 +91,7 @@ const submitObservationSchema = z.object({
         .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
         .refine(
           (val) => isValidISODate(val),
-          { message: 'Invalid date: must be between 2024-01-01 and tomorrow, with valid month (01-12) and day for that month' }
+          { message: 'Invalid date: month must be 01-12 and day must be valid for that month' }
         ),
       startTime: timeSchema,
       endTime: timeSchema,
