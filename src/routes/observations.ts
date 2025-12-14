@@ -24,14 +24,15 @@ function isValidISODate(dateStr: string): boolean {
   const month = Number(monthStr);
   const day = Number(dayStr);
 
-  // Validate year range (2024-01-01 to tomorrow)
+  // Validate date range (2024-01-01 to tomorrow)
   // Matches database constraint: observation_date >= '2024-01-01' AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
-  const minYear = 2024;
+  const inputDate = new Date(year, month - 1, day);
+  const minDate = new Date(2024, 0, 1); // January 1, 2024
   const maxDate = new Date();
   maxDate.setDate(maxDate.getDate() + 1); // Tomorrow
-  const maxYear = maxDate.getFullYear();
+  maxDate.setHours(23, 59, 59, 999); // End of tomorrow
 
-  if (year < minYear || year > maxYear) {
+  if (inputDate < minDate || inputDate > maxDate) {
     return false;
   }
 

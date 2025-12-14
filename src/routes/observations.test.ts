@@ -375,6 +375,28 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for date beyond tomorrow (validates full date not just year)', async () => {
+    const payload = validBody();
+    // Calculate a date 1 week from now
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const nextWeekStr = nextWeek.toISOString().split('T')[0]!;
+
+    payload.observation.metadata.date = nextWeekStr;
+    // Use a past time to ensure this test validates date range, not future datetime
+    payload.observation.metadata.startTime = '09:00';
+    payload.observation.metadata.endTime = '10:00';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('returns 400 for invalid time format', async () => {
     const payload = validBody();
     payload.observation.metadata.startTime = '25:60'; // Invalid hours and minutes
