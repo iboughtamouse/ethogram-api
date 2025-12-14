@@ -24,7 +24,23 @@ function isValidISODate(dateStr: string): boolean {
   const month = Number(monthStr);
   const day = Number(dayStr);
 
+  // Validate month first (before creating Date object)
+  if (month < 1 || month > 12) {
+    return false;
+  }
+
+  // Validate day based on month (before creating Date object to avoid auto-correction)
+  // Example: new Date(2025, 1, 30) auto-corrects Feb 30 to March 2
+  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+  const maxDay = (isLeapYear && month === 2) ? 29 : daysInMonth[month - 1] ?? 31;
+
+  if (day < 1 || day > maxDay) {
+    return false;
+  }
+
   // Validate date range (2024-01-01 to tomorrow)
+  // Now safe to create Date object since we've validated month/day are valid
   // Matches database constraint: observation_date >= '2024-01-01' AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
   // Note: This validates the DATE portion only. Future datetime validation (date + time) happens separately in the schema refinement.
   const inputDate = new Date(year, month - 1, day);
@@ -34,25 +50,6 @@ function isValidISODate(dateStr: string): boolean {
   maxDate.setHours(23, 59, 59, 999); // End of tomorrow
 
   if (inputDate < minDate || inputDate > maxDate) {
-    return false;
-  }
-
-  // Validate month
-  if (month < 1 || month > 12) {
-    return false;
-  }
-
-  // Validate day based on month
-  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-  // Adjust for leap year
-  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
-  if (isLeapYear && month === 2) {
-    daysInMonth[1] = 29;
-  }
-
-  const maxDay = daysInMonth[month - 1] ?? 31;
-  if (day < 1 || day > maxDay) {
     return false;
   }
 
