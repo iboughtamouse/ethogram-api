@@ -404,6 +404,45 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for observation dated in the future', async () => {
+    const payload = validBody();
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0]!;
+
+    payload.observation.metadata.date = tomorrowStr;
+    payload.observation.metadata.startTime = '12:00';
+    payload.observation.metadata.endTime = '13:00';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for observation starting in the future (today but future time)', async () => {
+    const payload = validBody();
+    const now = new Date();
+    const futureTime = new Date(now.getTime() + 2 * 60 * 60 * 1000); // 2 hours from now
+
+    payload.observation.metadata.date = now.toISOString().split('T')[0]!;
+    payload.observation.metadata.startTime = futureTime.toTimeString().slice(0, 5);
+    payload.observation.metadata.endTime = new Date(futureTime.getTime() + 60 * 60 * 1000).toTimeString().slice(0, 5);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('accepts request without emails (download-only submission)', async () => {
     const payload = validBody();
     delete (payload as { emails?: string[] }).emails;

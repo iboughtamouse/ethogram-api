@@ -100,6 +100,15 @@ const submitObservationSchema = z.object({
     }).refine(
       (data) => data.endTime > data.startTime,
       { message: 'End time must be after start time', path: ['endTime'] }
+    ).refine(
+      (data) => {
+        // Combine date and startTime to check if observation is in the future
+        const observationDatetime = `${data.date}T${data.startTime}:00`;
+        const observationTime = new Date(observationDatetime);
+        const now = new Date();
+        return observationTime <= now;
+      },
+      { message: 'Observation cannot be in the future', path: ['date'] }
     ),
     observations: z.record(z.string(), observationSchema),
     submittedAt: z.string().datetime(),
