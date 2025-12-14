@@ -221,6 +221,132 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for date with invalid month (month 00)', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-00-15';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for date with invalid month (month 13)', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-13-01';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for date with invalid day (day 00)', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-05-00';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for date with day 32 in month with 31 days', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-01-32';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for date with day 31 in month with 30 days', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-04-31'; // April has 30 days
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for Feb 30 in non-leap year', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-02-30';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for Feb 29 in non-leap year', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2025-02-29'; // 2025 is not a leap year
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('accepts Feb 29 in leap year', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2024-02-29'; // 2024 is a leap year
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().success).toBe(true);
+  });
+
+  it('returns 400 for malformed date like 99/99/9999', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '99/99/9999';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('returns 400 for invalid time format', async () => {
     const payload = validBody();
     payload.observation.metadata.startTime = '25:60'; // Invalid hours and minutes

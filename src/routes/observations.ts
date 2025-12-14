@@ -12,6 +12,40 @@ const SHARE_RATE_LIMIT = {
   windowMs: 60 * 60 * 1000, // 1 hour
 };
 
+// Helper to validate strict ISO date (YYYY-MM-DD with valid month/day)
+function isValidISODate(dateStr: string): boolean {
+  // Check format first
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return false;
+  }
+
+  const [yearStr, monthStr, dayStr] = dateStr.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+
+  // Validate month
+  if (month < 1 || month > 12) {
+    return false;
+  }
+
+  // Validate day based on month
+  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  // Adjust for leap year
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+  if (isLeapYear && month === 2) {
+    daysInMonth[1] = 29;
+  }
+
+  const maxDay = daysInMonth[month - 1] ?? 31;
+  if (day < 1 || day > maxDay) {
+    return false;
+  }
+
+  return true;
+}
+
 // Helper to validate time string (HH:MM with valid hours/minutes)
 const timeSchema = z.string()
   .regex(/^\d{2}:\d{2}$/, 'Time must be in HH:MM format')
@@ -44,8 +78,8 @@ const submitObservationSchema = z.object({
       date: z.string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
         .refine(
-          (val) => !isNaN(Date.parse(val)),
-          { message: 'Invalid date' }
+          (val) => isValidISODate(val),
+          { message: 'Invalid date: month must be 01-12, day must be valid for that month' }
         ),
       startTime: timeSchema,
       endTime: timeSchema,
