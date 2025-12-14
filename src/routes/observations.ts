@@ -24,6 +24,17 @@ function isValidISODate(dateStr: string): boolean {
   const month = Number(monthStr);
   const day = Number(dayStr);
 
+  // Validate year range (2024-01-01 to tomorrow)
+  // Matches database constraint: observation_date >= '2024-01-01' AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
+  const minYear = 2024;
+  const maxDate = new Date();
+  maxDate.setDate(maxDate.getDate() + 1); // Tomorrow
+  const maxYear = maxDate.getFullYear();
+
+  if (year < minYear || year > maxYear) {
+    return false;
+  }
+
   // Validate month
   if (month < 1 || month > 12) {
     return false;

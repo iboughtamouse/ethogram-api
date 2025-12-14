@@ -347,6 +347,34 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for year before 2024', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '2023-12-31';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 400 for year far in future', async () => {
+    const payload = validBody();
+    payload.observation.metadata.date = '9999-09-09';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('returns 400 for invalid time format', async () => {
     const payload = validBody();
     payload.observation.metadata.startTime = '25:60'; // Invalid hours and minutes
