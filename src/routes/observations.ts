@@ -42,7 +42,9 @@ function isValidISODate(dateStr: string): boolean {
   // Validate date range (2024-01-01 to tomorrow)
   // Now safe to create Date object since we've validated month/day are valid
   // Matches database constraint: observation_date >= '2024-01-01' AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
-  // Note: This validates the DATE portion only. Future datetime validation (date + time) happens separately in the schema refinement.
+  // Note: This allows tomorrow's DATE for flexibility, matching the database constraint.
+  //       However, a separate datetime refinement (in the schema) ensures the observation's start time is not in the future.
+  //       This means tomorrow's date is allowed, but only if the time is not in the future (e.g., for late-night data entry).
   const inputDate = new Date(year, month - 1, day);
   const minDate = new Date(2024, 0, 1); // January 1, 2024
   const maxDate = new Date();
