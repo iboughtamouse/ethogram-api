@@ -383,9 +383,14 @@ describe('POST /api/observations/submit', () => {
     const nextWeekStr = nextWeek.toISOString().split('T')[0]!;
 
     payload.observation.metadata.date = nextWeekStr;
-    // Use a past time to ensure this test validates date range, not future datetime
-    payload.observation.metadata.startTime = '09:00';
-    payload.observation.metadata.endTime = '10:00';
+    // Use guaranteed past times (2 and 1 hours ago) to ensure this test validates
+    // date range, not future datetime validation
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const start = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    const end = new Date(now.getTime() - 1 * 60 * 60 * 1000);
+    payload.observation.metadata.startTime = `${pad(start.getHours())}:${pad(start.getMinutes())}`;
+    payload.observation.metadata.endTime = `${pad(end.getHours())}:${pad(end.getMinutes())}`;
 
     const response = await app.inject({
       method: 'POST',
