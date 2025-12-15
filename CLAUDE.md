@@ -122,7 +122,3 @@ src/
   services/        — Business logic (email, excel generation)
   utils/           — Shared utilities (rate limiting, sanitization)
 ```
-
-## Session Log
-
-See `notes/session-log.md` for detailed history (gitignored, local only).
