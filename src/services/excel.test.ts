@@ -77,14 +77,14 @@ describe('Excel Service', () => {
       const workbook = await generateExcelWorkbook(sampleObservation);
       const worksheet = workbook.getWorksheet('Ethogram Data');
 
-      // Row 4 should have relative times starting at 0:00
-      expect(worksheet?.getCell('B4').value).toBe('0:00');
-      expect(worksheet?.getCell('C4').value).toBe('0:05');
-      expect(worksheet?.getCell('D4').value).toBe('0:10');
-      expect(worksheet?.getCell('E4').value).toBe('0:15');
-      expect(worksheet?.getCell('F4').value).toBe('0:20');
-      expect(worksheet?.getCell('G4').value).toBe('0:25');
-      expect(worksheet?.getCell('H4').value).toBe('0:30');
+      // Row 4 should have actual timestamps (not relative)
+      expect(worksheet?.getCell('B4').value).toBe('10:00');
+      expect(worksheet?.getCell('C4').value).toBe('10:05');
+      expect(worksheet?.getCell('D4').value).toBe('10:10');
+      expect(worksheet?.getCell('E4').value).toBe('10:15');
+      expect(worksheet?.getCell('F4').value).toBe('10:20');
+      expect(worksheet?.getCell('G4').value).toBe('10:25');
+      expect(worksheet?.getCell('H4').value).toBe('10:30');
     });
 
     it('should mark observations in correct cells', async () => {
@@ -319,12 +319,12 @@ describe('Excel Service', () => {
       const workbook = await generateExcelWorkbook(midnightData);
       const worksheet = workbook.getWorksheet('Ethogram Data');
 
-      // Time headers should be relative: 0:00, 0:05, 0:10, 0:15, 0:20
-      expect(worksheet?.getCell('B4').value).toBe('0:00');  // 23:50
-      expect(worksheet?.getCell('C4').value).toBe('0:05');  // 23:55
-      expect(worksheet?.getCell('D4').value).toBe('0:10');  // 00:00
-      expect(worksheet?.getCell('E4').value).toBe('0:15');  // 00:05
-      expect(worksheet?.getCell('F4').value).toBe('0:20');  // 00:10
+      // Time headers should show actual timestamps (not relative)
+      expect(worksheet?.getCell('B4').value).toBe('23:50');
+      expect(worksheet?.getCell('C4').value).toBe('23:55');
+      expect(worksheet?.getCell('D4').value).toBe('00:00');
+      expect(worksheet?.getCell('E4').value).toBe('00:05');
+      expect(worksheet?.getCell('F4').value).toBe('00:10');
 
       // Find flying row and check 00:05 observation is in correct column
       let flyingRow = 0;

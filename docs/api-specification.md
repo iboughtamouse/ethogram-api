@@ -1021,7 +1021,7 @@ World Bird Sanctuary Ethogram Team
 Single worksheet with a matrix layout matching the current WBS ethogram format that observers use:
 
 - **Header rows:** Observer name, date, start/end time, mode, aviary
-- **Time slot columns:** One column per 5-minute time slot (e.g., 15:00, 15:05, 15:10)
+- **Time slot columns:** One column per 5-minute time slot with actual timestamps (e.g., 15:00, 15:05, 15:10)
 - **Behavior rows:** One row per field (behavior, location, notes, etc.)
 - **Values:** Cell values show the observation data for each time slot
 
