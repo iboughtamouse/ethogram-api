@@ -131,33 +131,6 @@ function generateTimeSlots(startTime: string, endTime: string): string[] {
 }
 
 /**
- * Converts absolute time to relative format based on start time
- */
-function convertToRelativeTime(time: string, startTime: string): string {
-  const timeParts = time.split(':').map(Number);
-  const startParts = startTime.split(':').map(Number);
-  const timeHours = timeParts[0] ?? 0;
-  const timeMinutes = timeParts[1] ?? 0;
-  const startHours = startParts[0] ?? 0;
-  const startMinutes = startParts[1] ?? 0;
-
-  let totalTimeMinutes = timeHours * 60 + timeMinutes;
-  const totalStartMinutes = startHours * 60 + startMinutes;
-
-  // Handle midnight crossing
-  if (totalTimeMinutes < totalStartMinutes) {
-    totalTimeMinutes += 24 * 60;
-  }
-
-  const diffMinutes = totalTimeMinutes - totalStartMinutes;
-  const hours = Math.floor(diffMinutes / 60);
-  const minutes = diffMinutes % 60;
-
-  return `${hours}:${String(minutes).padStart(2, '0')}`;
-}
-
-/**
-/**
  * Formats observation details for a cell.
  * For multi-subject observations, formats each subject's data.
  */
@@ -208,7 +181,7 @@ export async function generateExcelWorkbook(
 
   // Set column widths for readability
   worksheet.getColumn('A').width = 35.0;  // Behavior labels column - increased ~35% from 25.75 to reduce wrapping
-  worksheet.getColumn('B').width = 8.0;   // Time column (relative) - increased from 4.88 for readability
+  worksheet.getColumn('B').width = 8.0;   // Time column headers - increased from 4.88 for readability
   // Columns C onwards (time slots) - set width 13.0
   for (let col = 3; col <= timeSlots.length + 1; col++) {
     worksheet.getColumn(col).width = 13.0;
@@ -252,12 +225,11 @@ export async function generateExcelWorkbook(
   timeLabelCell.value = 'Time:';
   timeLabelCell.font = { bold: true };
 
-  // Row 4: Time slot headers (relative format) - make bold
+  // Row 4: Time slot headers (actual timestamps) - make bold
   timeSlots.forEach((time, index) => {
-    const relativeTime = convertToRelativeTime(time, metadata.startTime);
     const columnIndex = index + 2; // Column B is index 2
     const headerCell = worksheet.getCell(4, columnIndex);
-    headerCell.value = relativeTime;
+    headerCell.value = time;
     headerCell.font = { bold: true };
   });
 
