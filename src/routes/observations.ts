@@ -12,6 +12,52 @@ const SHARE_RATE_LIMIT = {
   windowMs: 60 * 60 * 1000, // 1 hour
 };
 
+// Helper to validate strict ISO date (YYYY-MM-DD with valid month/day)
+function isValidISODate(dateStr: string): boolean {
+  // Check format first
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return false;
+  }
+
+  const [yearStr, monthStr, dayStr] = dateStr.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+
+  // Validate month first (before creating Date object)
+  if (month < 1 || month > 12) {
+    return false;
+  }
+
+  // Validate day based on month (before creating Date object to avoid auto-correction)
+  // Example: new Date(2025, 1, 30) auto-corrects Feb 30 to March 2
+  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+  const maxDay = (isLeapYear && month === 2) ? 29 : daysInMonth[month - 1] ?? 31;
+
+  if (day < 1 || day > maxDay) {
+    return false;
+  }
+
+  // Validate date range (2024-01-01 to tomorrow)
+  // Now safe to create Date object since we've validated month/day are valid
+  // Matches database constraint: observation_date >= '2024-01-01' AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
+  // Note: This allows tomorrow's DATE for flexibility, matching the database constraint.
+  //       However, a separate datetime refinement (in the schema) ensures the observation's start time is not in the future.
+  //       This means tomorrow's date is allowed, but only if the time is not in the future (e.g., for late-night data entry).
+  const inputDate = new Date(year, month - 1, day);
+  const minDate = new Date(2024, 0, 1); // January 1, 2024
+  const maxDate = new Date();
+  maxDate.setDate(maxDate.getDate() + 1); // Tomorrow
+  maxDate.setHours(23, 59, 59, 999); // End of tomorrow
+
+  if (inputDate < minDate || inputDate > maxDate) {
+    return false;
+  }
+
+  return true;
+}
+
 // Helper to validate time string (HH:MM with valid hours/minutes)
 const timeSchema = z.string()
   .regex(/^\d{2}:\d{2}$/, 'Time must be in HH:MM format')
@@ -44,8 +90,8 @@ const submitObservationSchema = z.object({
       date: z.string()
         .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
         .refine(
-          (val) => !isNaN(Date.parse(val)),
-          { message: 'Invalid date' }
+          (val) => isValidISODate(val),
+          { message: 'Invalid date: month must be 01-12 and day must be valid for that month' }
         ),
       startTime: timeSchema,
       endTime: timeSchema,
@@ -55,6 +101,15 @@ const submitObservationSchema = z.object({
     }).refine(
       (data) => data.endTime > data.startTime,
       { message: 'End time must be after start time', path: ['endTime'] }
+    ).refine(
+      (data) => {
+        // Combine date and startTime to check if observation is in the future
+        const observationDatetime = `${data.date}T${data.startTime}:00`;
+        const observationTime = new Date(observationDatetime);
+        const now = new Date();
+        return observationTime <= now;
+      },
+      { message: 'Observation cannot be in the future', path: ['date'] }
     ),
     observations: z.record(z.string(), observationSchema),
     submittedAt: z.string().datetime(),
