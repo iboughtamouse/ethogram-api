@@ -428,8 +428,8 @@ GET /api/observations/550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
-| Field   | Type   | Required | Constraints                  | Description           |
-| ------- | ------ | -------- | ---------------------------- | --------------------- |
+| Field   | Type   | Required | Constraints                       | Description             |
+| ------- | ------ | -------- | --------------------------------- | ----------------------- |
 | `email` | string | Yes      | Valid email format, max 254 chars | Recipient email address |
 
 **Example Request:**
