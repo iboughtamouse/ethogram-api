@@ -122,6 +122,41 @@ Noise to skip (with justification):
 | Hosting           | Railway (API + PostgreSQL)                                      |
 | Email             | Resend                                                          |
 
+## Related Repositories
+
+This backend API is part of a three-repository system:
+
+### **wbs-ethogram-form** (Frontend)
+- **Location**: `../wbs-ethogram-form/`
+- **Purpose**: React application for data entry
+- **AI Guidance**: [wbs-ethogram-form/CLAUDE.md](../wbs-ethogram-form/CLAUDE.md)
+- **Quick Reference**: [wbs-ethogram-form/.github/copilot-instructions.md](../wbs-ethogram-form/.github/copilot-instructions.md)
+
+### **ethogram-notes** (Documentation)
+- **Location**: `../ethogram-notes/`
+- **Purpose**: Project context, study feedback, improvement roadmap
+- **Overview**: [ethogram-notes/README.md](../ethogram-notes/README.md)
+- **Current Work**: [ethogram-notes/24hr-study-feedback.md](../ethogram-notes/24hr-study-feedback.md)
+
+### Cross-Repository Coordination
+
+When making changes that affect multiple repositories:
+
+**Behavior Changes** (Items 5-9 in 24hr study feedback):
+1. Update `src/constants/behaviors.js` in frontend
+2. Update `src/services/excel.ts` BEHAVIOR_ROW_MAPPING in backend
+3. Document in `ethogram-notes/24hr-study-feedback.md`
+4. Coordinate deployment (both must go live together)
+
+**Data Shape Changes** (Phase 4 multi-subject):
+1. Frontend state management refactor (see `ethogram-notes/data-shape-alignment-analysis.md`)
+2. Remove data transformation in `src/routes/observations.ts` (backend already stores arrays)
+3. Update Excel generation in both repos
+
+**Timezone Simplification** (Item 11):
+- Frontend only — no backend changes needed
+- Backend already stores times as submitted
+
 ## Project Structure
 
 ```
