@@ -1,10 +1,10 @@
 # API Specification - WBS Ethogram Backend
 
 **Version:** 1.0.0
-**Last Updated:** November 30, 2025
-**Status:** Draft - Phase 2 Implementation Ready
+**Last Updated:** December 24, 2025
+**Status:** ✅ PRODUCTION (deployed November 2025)
 
-> ⚠️ **Note:** This is a planning document written before implementation. The actual stack is Node.js/TypeScript/Fastify (not Go/Gin). For current state, see `README.md`. The code and tests are the source of truth.
+> ⚠️ **Note:** This was originally a planning document. The actual implementation uses Node.js/TypeScript/Fastify (not Go/Gin). For current state, see `README.md` and the code itself.
 
 ---
 
