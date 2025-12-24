@@ -1,5 +1,6 @@
 # CLAUDE.md - AI-Human Working Agreement
 
+> **Last Updated:** December 24, 2025
 > This document governs how AI assistants work on this codebase.
 > The goal: AI-driven development that produces code a human can actually review.
 

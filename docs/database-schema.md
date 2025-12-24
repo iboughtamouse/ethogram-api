@@ -1,7 +1,7 @@
 # Database Schema Documentation
 
-**Last Updated:** November 24, 2025
-**Status:** Phase 2 Design - Ready for Implementation
+**Last Updated:** December 24, 2025
+**Status:** ✅ PRODUCTION (deployed November 2025)
 **Database:** PostgreSQL 14+
 **Purpose:** Multi-subject behavioral observation data for WBS ethogram project
 
@@ -42,12 +42,12 @@ This database stores behavioral observations of birds in aviaries at World Bird 
 4. **Extensible** - Easy to add features (auth, baby tracking) without breaking changes
 5. **PostgreSQL-native** - Leverage JSONB, GIN indexes, constraints, and triggers
 
-### Phases
+### Deployment Status
 
-- **Phase 2** (Current): Foster parent only (Sayyida), anonymous submissions
-- **Phase 3** (Future): Optional authentication, user accounts
-- **Phase 4** (Future): Multi-subject observations (foster parent + babies)
-- **Phase 5+** (Future): Multi-aviary management, admin CRUD
+- **Current** (December 2025): Foster parent only (Sayyida), anonymous submissions, backend email delivery via Resend
+- **Future** (Phase 3): Optional authentication, user accounts
+- **Future** (Phase 4): Multi-subject observations (foster parent + babies)
+- **Future** (Phase 5+): Multi-aviary management, admin CRUD
 
 ---
 

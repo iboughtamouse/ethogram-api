@@ -24,9 +24,9 @@ See `CLAUDE.md` for full structure. Key directories:
 
 ### Data Transformation (Multi-Subject)
 
-**Important:** Database uses array structure even though Phase 2 frontend sends flat objects.
+**Important:** Database uses array structure to support future multi-subject observations, even though current frontend sends flat objects for single-subject (Sayyida).
 
-**Frontend sends (Phase 2):**
+**Frontend sends (current implementation):**
 ```typescript
 {
   "14:00": {
@@ -37,7 +37,7 @@ See `CLAUDE.md` for full structure. Key directories:
 }
 ```
 
-**Backend stores (array for Phase 4):**
+**Backend stores (array format for future expansion):**
 ```typescript
 {
   "14:00": [{
