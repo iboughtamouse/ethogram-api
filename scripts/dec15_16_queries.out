@@ -1,0 +1,146 @@
+1) Session overview
++----------+-----------+------------+----------------+------------+
+| sessions | observers | time_slots | earliest_start | latest_end |
++----------+-----------+------------+----------------+------------+
+|       46 |         7 |        425 | 00:00:00       | 23:55:00   |
++----------+-----------+------------+----------------+------------+
+(1 row)
+
+
+2) Behavior totals (foster parent)
++-----------------------+-------+---------+
+|       behavior        | slots | minutes |
++-----------------------+-------+---------+
+| resting_unknown       |   245 |    1225 |
+| resting_alert         |   150 |     750 |
+| walking_perch         |    13 |      65 |
+| preening              |     6 |      30 |
+| resting_not_alert     |     3 |      15 |
+| aggression            |     2 |      10 |
+| eating_food_platform  |     2 |      10 |
+| interacting_animal    |     2 |      10 |
+| other                 |     1 |       5 |
+| repetitive_locomotion |     1 |       5 |
++-----------------------+-------+---------+
+(10 rows)
+
+
+3) Locations (foster parent)
++----------+-------+-------+
+| location | slots |  pct  |
++----------+-------+-------+
+| 1        |   399 | 95.68 |
+| 3        |     7 |  1.68 |
+| F1       |     5 |  1.20 |
+| 2        |     3 |  0.72 |
+| 4        |     2 |  0.48 |
+| 5        |     1 |  0.24 |
++----------+-------+-------+
+(6 rows)
+
+
+4) Observer contribution by mode
++---------------+------+----------+------------+
+| observer_name | mode | sessions | time_slots |
++---------------+------+----------+------------+
+| Starnerf      | vod  |       14 |        118 |
+| Starnerf      | live |        8 |         82 |
+| Lurch         | live |        8 |         68 |
+| DanMan149     | live |        7 |         76 |
+| RogueRedTail  | live |        3 |         39 |
+| spam          | live |        3 |         26 |
+| Juliana L     | live |        2 |         10 |
+| devin         | live |        1 |          6 |
++---------------+------+----------+------------+
+(8 rows)
+
+
+5) Interaction breakdown
++--------------------+--------+----------------------+------------------+-------+
+|      behavior      | object |        animal        | interaction_type | slots |
++--------------------+--------+----------------------+------------------+-------+
+| interacting_animal |        | same_species_outside | watching         |     1 |
+| interacting_animal |        | other                | other            |     1 |
++--------------------+--------+----------------------+------------------+-------+
+(2 rows)
+
+
+6) Hourly behavior heatmap (foster parent)
++-------------+-----------------------+-------+
+| hour_of_day |       behavior        | slots |
++-------------+-----------------------+-------+
+|           0 | resting_unknown       |    10 |
+|           0 | resting_alert         |     2 |
+|           1 | resting_unknown       |    11 |
+|           1 | resting_alert         |     1 |
+|           2 | resting_unknown       |    12 |
+|           3 | resting_unknown       |    11 |
+|           3 | resting_alert         |     1 |
+|           4 | resting_unknown       |    12 |
+|           5 | resting_unknown       |     8 |
+|           5 | preening              |     2 |
+|           5 | resting_alert         |     1 |
+|           5 | walking_perch         |     1 |
+|           6 | resting_unknown       |     9 |
+|           6 | walking_perch         |     2 |
+|           6 | other                 |     1 |
+|           7 | resting_alert         |     5 |
+|           7 | resting_unknown       |     4 |
+|           7 | walking_perch         |     3 |
+|           8 | resting_alert         |    19 |
+|           8 | resting_unknown       |    13 |
+|           8 | walking_perch         |     3 |
+|           8 | preening              |     1 |
+|           8 | repetitive_locomotion |     1 |
+|           9 | resting_unknown       |    30 |
+|           9 | resting_alert         |    16 |
+|          10 | resting_unknown       |    18 |
+|          10 | resting_alert         |    17 |
+|          11 | resting_unknown       |    15 |
+|          11 | resting_alert         |    10 |
+|          12 | resting_alert         |    15 |
+|          12 | resting_unknown       |     7 |
+|          13 | resting_unknown       |    12 |
+|          13 | resting_alert         |     4 |
+|          14 | resting_unknown       |    11 |
+|          14 | resting_alert         |     2 |
+|          15 | resting_unknown       |     8 |
+|          15 | resting_alert         |     4 |
+|          16 | resting_alert         |    11 |
+|          16 | resting_unknown       |     1 |
+|          16 | walking_perch         |     1 |
+|          17 | resting_alert         |    20 |
+|          17 | resting_unknown       |    13 |
+|          17 | aggression            |     2 |
+|          17 | interacting_animal    |     1 |
+|          17 | preening              |     1 |
+|          18 | resting_unknown       |     7 |
+|          19 | resting_unknown       |     4 |
+|          19 | resting_alert         |     2 |
+|          20 | resting_alert         |     9 |
+|          20 | resting_unknown       |     7 |
+|          20 | preening              |     2 |
+|          21 | resting_unknown       |    10 |
+|          21 | resting_alert         |     2 |
+|          22 | resting_unknown       |     8 |
+|          22 | resting_alert         |     3 |
+|          22 | eating_food_platform  |     2 |
+|          22 | walking_perch         |     2 |
+|          23 | resting_alert         |     6 |
+|          23 | resting_unknown       |     4 |
+|          23 | resting_not_alert     |     3 |
+|          23 | interacting_animal    |     1 |
+|          23 | walking_perch         |     1 |
++-------------+-----------------------+-------+
+(62 rows)
+
+
+7) Notes keyword scan (foster parent)
++--------------------------------------+---------------+----------+----------------------------------------------------------------------------------------------------------------------------------------------+
+|                  id                  | observer_name | time_key |                                                                     note                                                                     |
++--------------------------------------+---------------+----------+----------------------------------------------------------------------------------------------------------------------------------------------+
+| 269e8520-24f9-45d3-b125-56e5dac14d21 | spam          | 23:40    | stranger left a bit ago, Sayyida is on high alert watching something to her left                                                             |
+| e0d223b7-df1b-496d-9bdc-1930b2f590c4 | devin         | 08:45    | Briefly took interest in something to the left of her (unsure what), took a few steps to the left, then walked back on top of her rope/knot. |
++--------------------------------------+---------------+----------+----------------------------------------------------------------------------------------------------------------------------------------------+
+(2 rows)
+

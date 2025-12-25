@@ -15,30 +15,37 @@ import ExcelJS from 'exceljs';
 
 /**
  * Maps behavior values to display labels for Excel rows
+ * Includes both current and legacy behavior values for backward compatibility
  */
 const BEHAVIOR_ROW_MAPPING: Record<string, string> = {
+  // New consolidated behaviors
+  eating: 'Eating (Note Location)',
+  walking: 'Locomotion - Walking (Note Location)',
+
+  // Legacy values (backward compatibility)
   eating_food_platform: 'Eating - On Food Platform',
   eating_elsewhere: 'Eating - Elsewhere (Note Location)',
   walking_ground: 'Locomotion - Walking on Ground',
   walking_perch: 'Locomotion - Walking on Perch (Note Location)',
+  aggression: 'Aggression or Defensive Posturing',
+
+  // Unchanged behaviors
   flying: 'Locomotion - Flying',
   jumping: 'Locomotion - Jumping',
-  repetitive_locomotion:
-    'Repetitive Locomotion (Same movement 3+ times in a row)',
-  drinking: 'Drinking (Note source if not from the water bowl)',
+  repetitive_locomotion: 'Repetitive Locomotion (Note Location)',
+  drinking: 'Drinking',
   bathing: 'Bathing',
   preening: 'Preening/Grooming (Note Location)',
-  repetitive_preening:
-    'Repetitive Preening/Feather Damage (Plucking, Mutilation, Etc.)',
+  repetitive_preening: 'Repetitive Preening/Feather Damage (Note Location)',
   nesting: 'Nesting',
-  vocalizing: 'Vocalizing',
+  vocalizing: 'Vocalizing (Note Location)',
   resting_alert: 'Resting on Perch/Ground - Alert (Note Location)',
   resting_not_alert: 'Resting on Perch/Ground - Not Alert (Note Location)',
   resting_unknown: 'Resting on Perch/Ground - Status Unknown (Note Location)',
-  interacting_object: 'Interacting with Inanimate Object (Note Object)',
+  interacting_object:
+    'Interacting with Inanimate Object (Note Location, Object & Interaction)',
   interacting_animal:
-    'Interacting with Other Animal (Note Animal & Type of Interaction)',
-  aggression: 'Aggression or Defensive Posturing',
+    'Interacting with Other Animal (Note Location, Animal & Interaction)',
   not_visible: 'Not Visible',
   other: 'Other',
 };
@@ -55,8 +62,13 @@ interface SubjectObservation {
   notes?: string;
   object?: string;
   objectOther?: string;
+  objectInteractionType?: string;
+  objectInteractionTypeOther?: string;
   animal?: string;
   animalOther?: string;
+  animalInteractionType?: string;
+  animalInteractionTypeOther?: string;
+  // Legacy fields (backward compatibility)
   interactionType?: string;
   interactionTypeOther?: string;
   description?: string;
@@ -151,9 +163,26 @@ function formatCellContent(observation: SubjectObservation): string {
     parts.push(`Animal: ${animalValue}`);
   }
 
-  const interactionValue = resolveOtherField(observation.interactionType, observation.interactionTypeOther);
-  if (interactionValue) {
-    parts.push(`Interaction: ${interactionValue}`);
+  // Handle object interaction type (new field)
+  const objectInteractionValue = resolveOtherField(
+    observation.objectInteractionType,
+    observation.objectInteractionTypeOther
+  );
+  if (objectInteractionValue) {
+    parts.push(`Object Interaction: ${objectInteractionValue}`);
+  }
+
+  // Handle animal interaction type (new field or legacy interactionType)
+  const animalInteractionType =
+    observation.animalInteractionType || observation.interactionType; // Legacy fallback
+  const animalInteractionTypeOther =
+    observation.animalInteractionTypeOther || observation.interactionTypeOther; // Legacy fallback
+  const animalInteractionValue = resolveOtherField(
+    animalInteractionType,
+    animalInteractionTypeOther
+  );
+  if (animalInteractionValue) {
+    parts.push(`Animal Interaction: ${animalInteractionValue}`);
   }
 
   if (observation.description) {

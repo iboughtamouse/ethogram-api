@@ -119,7 +119,10 @@ describe('Excel Service', () => {
       let objectRow = 0;
       for (let row = 5; row <= 30; row++) {
         const cellValue = worksheet?.getCell(row, 1).value;
-        if (cellValue === 'Interacting with Inanimate Object (Note Object)') {
+        if (
+          cellValue ===
+          'Interacting with Inanimate Object (Note Location, Object & Interaction)'
+        ) {
           objectRow = row;
           break;
         }
@@ -144,7 +147,7 @@ describe('Excel Service', () => {
         const cellValue = worksheet?.getCell(row, 1).value;
         if (
           cellValue ===
-          'Interacting with Other Animal (Note Animal & Type of Interaction)'
+          'Interacting with Other Animal (Note Location, Animal & Interaction)'
         ) {
           animalRow = row;
           break;
@@ -158,7 +161,7 @@ describe('Excel Service', () => {
       expect(cell?.value).toContain('x');
       expect(cell?.value).toContain('Loc: G');
       expect(cell?.value).toContain('Animal: squirrel');
-      expect(cell?.value).toContain('Interaction: watching');
+      expect(cell?.value).toContain('Animal Interaction: watching');
     });
 
     it('should use "Other" field values when type is "other"', async () => {
@@ -196,7 +199,10 @@ describe('Excel Service', () => {
       // Find interacting_object row
       let objectRow = 0;
       for (let row = 5; row <= 30; row++) {
-        if (worksheet?.getCell(row, 1).value === 'Interacting with Inanimate Object (Note Object)') {
+        if (
+          worksheet?.getCell(row, 1).value ===
+          'Interacting with Inanimate Object (Note Location, Object & Interaction)'
+        ) {
           objectRow = row;
           break;
         }
@@ -208,7 +214,10 @@ describe('Excel Service', () => {
       // Find interacting_animal row
       let animalRow = 0;
       for (let row = 5; row <= 30; row++) {
-        if (worksheet?.getCell(row, 1).value === 'Interacting with Other Animal (Note Animal & Type of Interaction)') {
+        if (
+          worksheet?.getCell(row, 1).value ===
+          'Interacting with Other Animal (Note Location, Animal & Interaction)'
+        ) {
           animalRow = row;
           break;
         }
@@ -216,7 +225,7 @@ describe('Excel Service', () => {
 
       const animalCell = worksheet?.getCell(animalRow, 3); // 10:05 is column C
       expect(animalCell?.value).toContain('Animal: Unknown bird species');
-      expect(animalCell?.value).toContain('Interaction: Mutual observation');
+      expect(animalCell?.value).toContain('Animal Interaction: Mutual observation');
     });
 
     it('should fallback to "other" when otherField is missing', async () => {
@@ -241,7 +250,10 @@ describe('Excel Service', () => {
 
       let objectRow = 0;
       for (let row = 5; row <= 30; row++) {
-        if (worksheet?.getCell(row, 1).value === 'Interacting with Inanimate Object (Note Object)') {
+        if (
+          worksheet?.getCell(row, 1).value ===
+          'Interacting with Inanimate Object (Note Location, Object & Interaction)'
+        ) {
           objectRow = row;
           break;
         }
