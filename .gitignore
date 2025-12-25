@@ -6,5 +6,9 @@ coverage/
 *.log
 .DS_Store
 
+# Database backups and query scratch files
+railway_production_backup.sql
+*.out
+
 # Internal notes (session context, not for repo)
 notes/
