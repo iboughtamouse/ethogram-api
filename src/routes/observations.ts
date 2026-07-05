@@ -75,10 +75,12 @@ const observationSchema = z.object({
   notes: z.string(),
   object: z.string().optional().default(''),
   objectOther: z.string().optional().default(''),
+  objectInteractionType: z.string().optional().default(''),
+  objectInteractionTypeOther: z.string().optional().default(''),
   animal: z.string().optional().default(''),
   animalOther: z.string().optional().default(''),
-  interactionType: z.string().optional().default(''),
-  interactionTypeOther: z.string().optional().default(''),
+  animalInteractionType: z.string().optional().default(''),
+  animalInteractionTypeOther: z.string().optional().default(''),
   description: z.string().optional().default(''),
 });
 
@@ -126,10 +128,12 @@ type SubjectObservation = {
   notes: string;
   object: string;
   objectOther: string;
+  objectInteractionType: string;
+  objectInteractionTypeOther: string;
   animal: string;
   animalOther: string;
-  interactionType: string;
-  interactionTypeOther: string;
+  animalInteractionType: string;
+  animalInteractionTypeOther: string;
   description: string;
 };
 
@@ -225,10 +229,12 @@ function transformObservations(
         notes: obs.notes,
         object: obs.object,
         objectOther: obs.objectOther,
+        objectInteractionType: obs.objectInteractionType,
+        objectInteractionTypeOther: obs.objectInteractionTypeOther,
         animal: obs.animal,
         animalOther: obs.animalOther,
-        interactionType: obs.interactionType,
-        interactionTypeOther: obs.interactionTypeOther,
+        animalInteractionType: obs.animalInteractionType,
+        animalInteractionTypeOther: obs.animalInteractionTypeOther,
         description: obs.description,
       },
     ];

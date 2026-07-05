@@ -510,8 +510,8 @@ describe('POST /api/observations/submit', () => {
             notes: '',
             animal: 'other',
             animalOther: 'Unknown species',
-            interactionType: 'other',
-            interactionTypeOther: 'Mutual grooming',
+            animalInteractionType: 'other',
+            animalInteractionTypeOther: 'Mutual grooming',
           },
           '14:10': {
             behavior: 'other',
@@ -546,8 +546,8 @@ describe('POST /api/observations/submit', () => {
     const animalSlot = timeSlots?.['14:05']?.[0] as Record<string, string>;
     expect(animalSlot.animal).toBe('other');
     expect(animalSlot.animalOther).toBe('Unknown species');
-    expect(animalSlot.interactionType).toBe('other');
-    expect(animalSlot.interactionTypeOther).toBe('Mutual grooming');
+    expect(animalSlot.animalInteractionType).toBe('other');
+    expect(animalSlot.animalInteractionTypeOther).toBe('Mutual grooming');
 
     // Check description field
     const descSlot = timeSlots?.['14:10']?.[0] as Record<string, string>;
