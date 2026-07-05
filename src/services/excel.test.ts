@@ -53,7 +53,7 @@ const sampleObservation = {
         behavior: 'interacting_animal',
         location: 'G',
         animal: 'squirrel',
-        interactionType: 'watching',
+        animalInteractionType: 'watching',
       },
     ],
   },
@@ -164,6 +164,82 @@ describe('Excel Service', () => {
       expect(cell?.value).toContain('Animal Interaction: watching');
     });
 
+    it('should include object interaction type for interacting_object', async () => {
+      const dataWithObjectInteraction = {
+        ...sampleObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_object',
+              location: '12',
+              object: 'rope_ball',
+              objectInteractionType: 'biting',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(dataWithObjectInteraction);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      let objectRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (
+          worksheet?.getCell(row, 1).value ===
+          'Interacting with Inanimate Object (Note Location, Object & Interaction)'
+        ) {
+          objectRow = row;
+          break;
+        }
+      }
+
+      // 10:00 is the first slot, so column B (index 2)
+      const cell = worksheet?.getCell(objectRow, 2);
+      expect(cell?.value).toContain('Object: rope_ball');
+      expect(cell?.value).toContain('Object Interaction: biting');
+    });
+
+    it('should fall back to legacy interactionType for animal interaction', async () => {
+      // Observations submitted before the interaction-field split carry the
+      // single interactionType field. The Excel export must keep rendering it
+      // until that legacy production data is migrated and the fallback removed.
+      const dataWithLegacyField = {
+        ...sampleObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_animal',
+              location: 'G',
+              animal: 'squirrel',
+              interactionType: 'watching',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(dataWithLegacyField);
+      const worksheet = workbook.getWorksheet('Ethogram Data');
+
+      let animalRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (
+          worksheet?.getCell(row, 1).value ===
+          'Interacting with Other Animal (Note Location, Animal & Interaction)'
+        ) {
+          animalRow = row;
+          break;
+        }
+      }
+
+      // 10:00 is the first slot, so column B (index 2)
+      const cell = worksheet?.getCell(animalRow, 2);
+      expect(cell?.value).toContain('Animal Interaction: watching');
+    });
+
     it('should use "Other" field values when type is "other"', async () => {
       const dataWithOther = {
         ...sampleObservation,
@@ -186,8 +262,8 @@ describe('Excel Service', () => {
               location: 'G',
               animal: 'other',
               animalOther: 'Unknown bird species',
-              interactionType: 'other',
-              interactionTypeOther: 'Mutual observation',
+              animalInteractionType: 'other',
+              animalInteractionTypeOther: 'Mutual observation',
             },
           ],
         },
