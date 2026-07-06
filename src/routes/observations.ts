@@ -259,11 +259,18 @@ export async function resolveAviary(
   return result.rows[0] ?? null;
 }
 
+// Generic (unidentified) subject labels the form may send instead of a name
+// (P2-D8): most observers cannot tell juveniles apart, so identification is
+// optional. These are wire-contract literals, not subjects rows — always
+// exempt from the residency check.
+const GENERIC_SUBJECT_IDS = new Set(['Juvenile']);
+
 /**
  * Names in subjectNames with no residency episode covering the observation
  * date in the given aviary. Episodes are half-open [arrived_on, departed_on):
  * a subject is resident on its arrival date, not on its departure date.
- * This is the P2-D5 warn-only telemetry — tightened to reject after 2C soaks.
+ * Generic labels (P2-D8) are never reported. This is the P2-D5 warn-only
+ * telemetry — tightened to reject after 2C soaks.
  */
 export async function findNonResidentSubjects(
   aviaryId: string,
@@ -271,7 +278,8 @@ export async function findNonResidentSubjects(
   subjectNames: string[],
   db: Db = defaultDb
 ): Promise<string[]> {
-  if (subjectNames.length === 0) {
+  const named = subjectNames.filter((name) => !GENERIC_SUBJECT_IDS.has(name));
+  if (named.length === 0) {
     return [];
   }
 
@@ -283,7 +291,7 @@ export async function findNonResidentSubjects(
     [aviaryId, date]
   );
   const resident = new Set(result.rows.map((r) => r.name));
-  return subjectNames.filter((name) => !resident.has(name));
+  return named.filter((name) => !resident.has(name));
 }
 
 /**
