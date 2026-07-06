@@ -68,9 +68,6 @@ interface SubjectObservation {
   animalOther?: string;
   animalInteractionType?: string;
   animalInteractionTypeOther?: string;
-  // Legacy fields (backward compatibility)
-  interactionType?: string;
-  interactionTypeOther?: string;
   description?: string;
 }
 
@@ -172,14 +169,10 @@ function formatCellContent(observation: SubjectObservation): string {
     parts.push(`Object Interaction: ${objectInteractionValue}`);
   }
 
-  // Handle animal interaction type (new field or legacy interactionType)
-  const animalInteractionType =
-    observation.animalInteractionType || observation.interactionType; // Legacy fallback
-  const animalInteractionTypeOther =
-    observation.animalInteractionTypeOther || observation.interactionTypeOther; // Legacy fallback
+  // Animal interaction type
   const animalInteractionValue = resolveOtherField(
-    animalInteractionType,
-    animalInteractionTypeOther
+    observation.animalInteractionType,
+    observation.animalInteractionTypeOther
   );
   if (animalInteractionValue) {
     parts.push(`Animal Interaction: ${animalInteractionValue}`);
