@@ -46,6 +46,9 @@ async function migrate() {
       
       // Run migration in a transaction
       const client = await pool.connect();
+      // Surface RAISE NOTICE output (e.g. backfill reports) — silently dropped otherwise
+      const onNotice = (msg: { message?: string }) => console.warn(`  NOTICE: ${msg.message}`);
+      client.on('notice', onNotice);
       try {
         await client.query('BEGIN');
         await client.query(sql);
@@ -57,6 +60,7 @@ async function migrate() {
         console.error(`Migration failed in ${file}:`, error);
         process.exit(1);
       } finally {
+        client.removeListener('notice', onNotice);
         client.release();
       }
     }
