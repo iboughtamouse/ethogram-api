@@ -1,0 +1,7 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^https?://" },
+    { "pattern": "^#" },
+    { "pattern": "(wbs-ethogram-form|ethogram-api|ethogram-notes)" }
+  ]
+}
