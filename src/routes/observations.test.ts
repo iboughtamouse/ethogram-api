@@ -824,6 +824,25 @@ describe('GET /api/observations/:id/excel', () => {
     expect(mockGenerateExcelBuffer).toHaveBeenCalledTimes(1);
   });
 
+  it('passes HH:MM times to Excel generation (Postgres time columns serialize as HH:MM:SS)', async () => {
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${id}/excel`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockGenerateExcelBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          startTime: '14:00',
+          endTime: '14:30',
+        }),
+      })
+    );
+  });
+
   it('returns 404 for non-existent observation', async () => {
     const fakeId = '00000000-0000-0000-0000-000000000000';
 

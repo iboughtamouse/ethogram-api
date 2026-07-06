@@ -201,8 +201,9 @@ async function fetchObservationById(id: string): Promise<{
   const metadata: ObservationMetadata = {
     observerName: row.observer_name,
     date: dateStr,
-    startTime: row.start_time,
-    endTime: row.end_time,
+    // PostgreSQL `time` columns serialize as HH:MM:SS; Excel expects HH:MM
+    startTime: row.start_time.slice(0, 5),
+    endTime: row.end_time.slice(0, 5),
     aviary: row.aviary,
     patient,
     mode: row.mode as 'live' | 'vod',
