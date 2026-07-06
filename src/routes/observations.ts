@@ -281,6 +281,24 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Insert into database
     try {
+      // Stamp the config version this row was submitted under (Phase 1 §3.1)
+      // and resolve the aviary display name to its entity. Both are best-effort:
+      // an unknown aviary is warn-logged and left NULL, never rejected — the
+      // wire contract is unchanged in Phase 1.
+      const versionResult = await query<{ id: number }>(
+        'SELECT id FROM config_versions ORDER BY id DESC LIMIT 1'
+      );
+      const configVersionId = versionResult.rows[0]?.id ?? null;
+
+      const aviaryResult = await query<{ id: string }>(
+        'SELECT id FROM aviaries WHERE name = $1',
+        [metadata.aviary]
+      );
+      const aviaryId = aviaryResult.rows[0]?.id ?? null;
+      if (!aviaryId) {
+        fastify.log.warn({ aviary: metadata.aviary }, 'Unknown aviary name; aviary_id left NULL');
+      }
+
       const result = await query<{ id: string }>(
         `INSERT INTO observations (
           observer_name,
@@ -291,8 +309,10 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           mode,
           time_slots,
           emails,
-          submitted_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          submitted_at,
+          aviary_id,
+          config_version_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id`,
         [
           metadata.observerName,
@@ -304,6 +324,8 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           JSON.stringify(timeSlots),
           emails ?? null,
           submittedAt,
+          aviaryId,
+          configVersionId,
         ]
       );
 
