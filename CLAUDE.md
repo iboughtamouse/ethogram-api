@@ -137,7 +137,7 @@ This backend API is part of a three-repository system:
 - **Location**: `../ethogram-notes/`
 - **Purpose**: Project context, study feedback, improvement roadmap
 - **Overview**: [ethogram-notes/README.md](../ethogram-notes/README.md)
-- **Current Work**: [ethogram-notes/24hr-study-feedback.md](../ethogram-notes/24hr-study-feedback.md)
+- **Current Work**: [ethogram-notes/01-ACTIVE/24hr-study-feedback.md](../ethogram-notes/01-ACTIVE/24hr-study-feedback.md)
 
 ### Cross-Repository Coordination
 
@@ -146,7 +146,7 @@ When making changes that affect multiple repositories:
 **Behavior Changes** (Items 5-9 in 24hr study feedback):
 1. Update `src/constants/behaviors.js` in frontend
 2. Update `src/services/excel.ts` BEHAVIOR_ROW_MAPPING in backend
-3. Document in `ethogram-notes/24hr-study-feedback.md`
+3. Document in `ethogram-notes/01-ACTIVE/24hr-study-feedback.md`
 4. Coordinate deployment (both must go live together)
 
 **Data Shape Changes** (Phase 4 multi-subject):
