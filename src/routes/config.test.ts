@@ -104,4 +104,14 @@ describe('GET /api/config/versions/:id', () => {
 
     expect(response.statusCode).toBe(404);
   });
+
+  it('returns 404 (not a Postgres 500) for an id beyond int4 range', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/config/versions/9999999999',
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('NOT_FOUND');
+  });
 });
