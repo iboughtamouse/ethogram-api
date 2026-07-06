@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { QueryResult, QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 import { generateExcelBuffer, type ExcelConfig } from '../services/excel.js';
@@ -101,8 +102,10 @@ const subjectObservationSchema = observationSchema.extend({
 // A time slot is either the array-native shape (one entry per recorded
 // subject) or the legacy flat single-subject object. Both are accepted during
 // the Phase 2 transition; the flat branch is removed in stage 2D.
+// max(20) is a generous bound on concurrently recorded subjects — it keeps
+// the derived email label and warn-log payloads bounded.
 const slotSchema = z.union([
-  z.array(subjectObservationSchema).min(1),
+  z.array(subjectObservationSchema).min(1).max(20),
   observationSchema,
 ]);
 
@@ -123,8 +126,10 @@ const submitObservationSchema = z.object({
       // entity; the array-native client sends the slug (P2-D4)
       aviary: z.string(),
       // Optional since Phase 2 stage 2A; still required alongside flat slots
-      // (see the superRefine below) and gone entirely in stage 2D
-      patient: z.string().optional(),
+      // (see the superRefine below) and gone entirely in stage 2D.
+      // Bounds mirror subjectId: a flat slot is wrapped with this value as
+      // its subjectId, so it must satisfy the same 1..255 invariant.
+      patient: z.string().min(1).max(255).optional(),
       mode: z.enum(['live', 'vod']),
     }).refine(
       (data) => data.endTime > data.startTime,
@@ -139,7 +144,10 @@ const submitObservationSchema = z.object({
       },
       { message: 'Observation cannot be in the future', path: ['date'] }
     ),
-    observations: z.record(z.string(), slotSchema),
+    observations: z.record(z.string(), slotSchema).refine(
+      (slots) => Object.keys(slots).length > 0,
+      { message: 'At least one time slot is required' }
+    ),
     submittedAt: z.string().datetime(),
   }).superRefine((obs, ctx) => {
     // A flat slot has no subject identity of its own — it can only be
@@ -204,11 +212,14 @@ async function fetchObservationById(id: string): Promise<{
 
   const row = result.rows[0]!;
 
-  // Extract patient from first time slot's first observation.
-  // Falls back to 'Unknown' if no time slots exist or first slot is empty.
-  const firstSlot = Object.values(row.time_slots)[0];
-  const firstObs = Array.isArray(firstSlot) ? firstSlot[0] : null;
-  const patient = firstObs?.subjectId ?? 'Unknown';
+  // Derive the patient label from the row's subjects — unique subjectIds in
+  // slot order, the same rule the submit path applies (jsonb sorts the
+  // fixed-width HH:MM keys, so slot order is chronological). Falls back to
+  // 'Unknown' for a row with no time slots.
+  const subjectNames = [
+    ...new Set(Object.values(row.time_slots).flat().map((s) => s.subjectId)),
+  ];
+  const patient = subjectNames.join(', ') || 'Unknown';
 
   // PostgreSQL returns Date objects for date columns, convert to YYYY-MM-DD string
   const dateStr = row.observation_date instanceof Date
@@ -227,6 +238,64 @@ async function fetchObservationById(id: string): Promise<{
   };
 
   return { row, metadata };
+}
+
+/**
+ * Minimal queryable the resolution helpers run against — the shared pool
+ * helper by default, a transaction-scoped client in tests.
+ */
+type Db = {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>;
+};
+const defaultDb: Db = { query };
+
+/**
+ * Resolve an aviary by display name or slug (P2-D4). When a value matches one
+ * aviary's name and a different aviary's slug, the display name wins — the
+ * legacy client contract predates slugs. Returns null for unknown values.
+ */
+export async function resolveAviary(
+  value: string,
+  db: Db = defaultDb
+): Promise<{ id: string; name: string } | null> {
+  const result = await db.query<{ id: string; name: string }>(
+    `SELECT id, name FROM aviaries
+     WHERE name = $1 OR slug = $1
+     ORDER BY (name = $1) DESC
+     LIMIT 1`,
+    [value]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Names in subjectNames with no residency episode covering the observation
+ * date in the given aviary. Episodes are half-open [arrived_on, departed_on):
+ * a subject is resident on its arrival date, not on its departure date.
+ * This is the P2-D5 warn-only telemetry — tightened to reject after 2C soaks.
+ */
+export async function findNonResidentSubjects(
+  aviaryId: string,
+  date: string,
+  subjectNames: string[],
+  db: Db = defaultDb
+): Promise<string[]> {
+  if (subjectNames.length === 0) {
+    return [];
+  }
+
+  const result = await db.query<{ name: string }>(
+    `SELECT name FROM subjects
+     WHERE aviary_id = $1
+       AND arrived_on <= $2
+       AND (departed_on IS NULL OR departed_on > $2)`,
+    [aviaryId, date]
+  );
+  const resident = new Set(result.rows.map((r) => r.name));
+  return subjectNames.filter((name) => !resident.has(name));
 }
 
 /**
@@ -273,24 +342,10 @@ function normalizeTimeSlots(
       throw new Error(`Flat time slot ${time} without metadata.patient`);
     }
 
-    result[time] = [
-      {
-        subjectType: 'foster_parent',
-        subjectId: patient,
-        behavior: slot.behavior,
-        location: slot.location,
-        notes: slot.notes,
-        object: slot.object,
-        objectOther: slot.objectOther,
-        objectInteractionType: slot.objectInteractionType,
-        objectInteractionTypeOther: slot.objectInteractionTypeOther,
-        animal: slot.animal,
-        animalOther: slot.animalOther,
-        animalInteractionType: slot.animalInteractionType,
-        animalInteractionTypeOther: slot.animalInteractionTypeOther,
-        description: slot.description,
-      },
-    ];
+    // The Zod-parsed slot holds exactly the schema's fields (unknown keys
+    // stripped, defaults applied), so spreading cannot drift from the schema;
+    // the identity fields come last so they can never be overridden.
+    result[time] = [{ ...slot, subjectType: 'foster_parent', subjectId: patient }];
   }
 
   return result;
@@ -299,6 +354,37 @@ function normalizeTimeSlots(
 export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/observations/submit
   fastify.post('/submit', async (request, reply) => {
+    // Structural pre-check on the raw body: a per-subject observation sent
+    // as a bare object (not wrapped in an array) would otherwise match the
+    // flat branch, which strips subjectType/subjectId and silently
+    // re-attributes the slot to metadata.patient. Reject it pointedly.
+    const rawSlots = (request.body as { observation?: { observations?: unknown } } | null)
+      ?.observation?.observations;
+    if (rawSlots !== null && typeof rawSlots === 'object' && !Array.isArray(rawSlots)) {
+      for (const [time, slot] of Object.entries(rawSlots as Record<string, unknown>)) {
+        if (
+          slot !== null &&
+          typeof slot === 'object' &&
+          !Array.isArray(slot) &&
+          ('subjectType' in slot || 'subjectId' in slot)
+        ) {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Validation failed',
+              details: [
+                {
+                  field: 'observation',
+                  message: `Time slot ${time} is a per-subject observation; send it as an array of subject observations`,
+                },
+              ],
+            },
+          });
+        }
+      }
+    }
+
     // Validate request body
     const parseResult = submitObservationSchema.safeParse(request.body);
 
@@ -348,12 +434,9 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       // The client may send the display name (legacy) or the slug (P2-D4);
       // the aviary varchar column keeps receiving the display name so Excel
       // headers and existing rows stay uniform. Unknown values pass through.
-      const aviaryResult = await query<{ id: string; name: string }>(
-        'SELECT id, name FROM aviaries WHERE name = $1 OR slug = $1',
-        [metadata.aviary]
-      );
-      const aviaryId = aviaryResult.rows[0]?.id ?? null;
-      const aviaryName = aviaryResult.rows[0]?.name ?? metadata.aviary;
+      const aviaryRow = await resolveAviary(metadata.aviary);
+      const aviaryId = aviaryRow?.id ?? null;
+      const aviaryName = aviaryRow?.name ?? metadata.aviary;
       if (!aviaryId) {
         fastify.log.warn({ aviary: metadata.aviary }, 'Unknown aviary name; aviary_id left NULL');
       }
@@ -362,15 +445,11 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       // bundled snapshot must never lose an hour of data over a subject
       // mismatch. Tighten to reject after 2C soaks in production.
       if (aviaryId) {
-        const residentResult = await query<{ name: string }>(
-          `SELECT name FROM subjects
-           WHERE aviary_id = $1
-             AND arrived_on <= $2
-             AND (departed_on IS NULL OR departed_on > $2)`,
-          [aviaryId, metadata.date]
+        const unknownSubjects = await findNonResidentSubjects(
+          aviaryId,
+          metadata.date,
+          subjectNames
         );
-        const resident = new Set(residentResult.rows.map((r) => r.name));
-        const unknownSubjects = subjectNames.filter((name) => !resident.has(name));
         if (unknownSubjects.length > 0) {
           fastify.log.warn(
             { aviary: aviaryName, date: metadata.date, subjects: unknownSubjects },
