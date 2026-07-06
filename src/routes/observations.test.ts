@@ -39,7 +39,7 @@ afterAll(async () => {
   await closePool();
 });
 
-// Helper to create a valid request body
+// Helper to create a valid request body (array-native since stage 2D)
 const validBody = () => ({
   observation: {
     metadata: {
@@ -47,21 +47,28 @@ const validBody = () => ({
       date: '2025-11-29',
       startTime: '14:00',
       endTime: '14:30',
-      aviary: "Sayyida's Cove",
-      patient: 'Sayyida',
+      aviary: 'sayyidas-cove',
       mode: 'live' as const,
     },
     observations: {
-      '14:00': {
-        behavior: 'resting_alert',
-        location: '12',
-        notes: 'Test observation',
-      },
-      '14:05': {
-        behavior: 'flying',
-        location: '',
-        notes: '',
-      },
+      '14:00': [
+        {
+          subjectType: 'foster_parent' as const,
+          subjectId: 'Sayyida',
+          behavior: 'resting_alert',
+          location: '12',
+          notes: 'Test observation',
+        },
+      ],
+      '14:05': [
+        {
+          subjectType: 'foster_parent' as const,
+          subjectId: 'Sayyida',
+          behavior: 'flying',
+          location: '',
+          notes: '',
+        },
+      ],
     },
     submittedAt: '2025-11-29T20:00:00.000Z',
   },
@@ -181,7 +188,7 @@ describe('POST /api/observations/submit', () => {
     expect(result.rows[0]!.config_version_id).toBeGreaterThanOrEqual(1);
   });
 
-  it('transforms observations to array format with subject info', async () => {
+  it('stores array-native slots with subject info', async () => {
     const payload = validBody();
 
     await app.inject({
@@ -197,7 +204,7 @@ describe('POST /api/observations/submit', () => {
     const timeSlots = result.rows[0]?.time_slots;
     expect(timeSlots).toBeDefined();
 
-    // Check that observations are wrapped in arrays with subject info
+    // Slots persist exactly as sent — arrays with subject identity
     const slot = timeSlots?.['14:00'];
     expect(Array.isArray(slot)).toBe(true);
     expect(slot?.[0]).toMatchObject({
@@ -252,7 +259,7 @@ describe('POST /api/observations/submit', () => {
 
   it('returns 400 for notes exceeding the max length', async () => {
     const payload = validBody();
-    payload.observation.observations['14:00'].notes = 'x'.repeat(1001);
+    payload.observation.observations['14:00'][0]!.notes = 'x'.repeat(1001);
 
     const response = await app.inject({
       method: 'POST',
@@ -549,33 +556,44 @@ describe('POST /api/observations/submit', () => {
           date: '2025-11-29',
           startTime: '14:00',
           endTime: '14:30',
-          aviary: "Sayyida's Cove",
-          patient: 'Sayyida',
+          aviary: 'sayyidas-cove',
           mode: 'live' as const,
         },
         observations: {
-          '14:00': {
-            behavior: 'interacting_object',
-            location: '12',
-            notes: 'Playing with toy',
-            object: 'other',
-            objectOther: 'Custom enrichment item',
-          },
-          '14:05': {
-            behavior: 'interacting_animal',
-            location: 'G',
-            notes: '',
-            animal: 'other',
-            animalOther: 'Unknown species',
-            animalInteractionType: 'other',
-            animalInteractionTypeOther: 'Mutual grooming',
-          },
-          '14:10': {
-            behavior: 'other',
-            location: '5',
-            notes: '',
-            description: 'Unusual stretching behavior',
-          },
+          '14:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_object',
+              location: '12',
+              notes: 'Playing with toy',
+              object: 'other',
+              objectOther: 'Custom enrichment item',
+            },
+          ],
+          '14:05': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'interacting_animal',
+              location: 'G',
+              notes: '',
+              animal: 'other',
+              animalOther: 'Unknown species',
+              animalInteractionType: 'other',
+              animalInteractionTypeOther: 'Mutual grooming',
+            },
+          ],
+          '14:10': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'other',
+              location: '5',
+              notes: '',
+              description: 'Unusual stretching behavior',
+            },
+          ],
         },
         submittedAt: '2025-11-29T20:00:00.000Z',
       },
@@ -716,7 +734,7 @@ describe('POST /api/observations/submit', () => {
     expect(mockSendObservationEmail).not.toHaveBeenCalled();
   });
 
-  describe('array-native slots (Phase 2 stage 2A)', () => {
+  describe('array-native slots', () => {
     // Array-native request: no metadata.patient, aviary sent as the slug
     const validArrayBody = () => ({
       observation: {
@@ -804,41 +822,14 @@ describe('POST /api/observations/submit', () => {
       });
     });
 
-    it('accepts mixed flat and array slots when patient is present', async () => {
+    it('returns 400 for a legacy flat (single-subject object) slot', async () => {
+      // The flat wire shape died in stage 2D
       const payload = validArrayBody();
-      (payload.observation.metadata as { patient?: string }).patient = 'Sayyida';
       (payload.observation.observations as Record<string, unknown>)['14:10'] = {
         behavior: 'preening',
         location: '3',
         notes: '',
       };
-
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/observations/submit',
-        payload,
-      });
-
-      expect(response.statusCode).toBe(201);
-
-      const result = await query<{ time_slots: Record<string, unknown[]> }>(
-        'SELECT time_slots FROM observations'
-      );
-      const timeSlots = result.rows[0]!.time_slots;
-      // Array slot passed through untouched
-      expect(timeSlots['14:00']).toHaveLength(2);
-      // Flat slot wrapped with the metadata patient
-      expect(timeSlots['14:10']).toHaveLength(1);
-      expect(timeSlots['14:10']![0]).toMatchObject({
-        subjectType: 'foster_parent',
-        subjectId: 'Sayyida',
-        behavior: 'preening',
-      });
-    });
-
-    it('returns 400 when flat slots are sent without metadata.patient', async () => {
-      const payload = validBody();
-      delete (payload.observation.metadata as { patient?: string }).patient;
 
       const response = await app.inject({
         method: 'POST',
@@ -934,9 +925,9 @@ describe('POST /api/observations/submit', () => {
       expect(result.rows[0]!.aviary_id).toBeNull();
     });
 
-    it('returns 400 for an empty patient string with flat slots', async () => {
+    it('ignores a stray metadata.patient key (removed in stage 2D)', async () => {
       const payload = validBody();
-      (payload.observation.metadata as { patient?: string }).patient = '';
+      (payload.observation.metadata as { patient?: string }).patient = 'Sayyida';
 
       const response = await app.inject({
         method: 'POST',
@@ -944,22 +935,8 @@ describe('POST /api/observations/submit', () => {
         payload,
       });
 
-      expect(response.statusCode).toBe(400);
-      expect(response.json().error.code).toBe('VALIDATION_ERROR');
-    });
-
-    it('returns 400 for a patient exceeding 255 characters', async () => {
-      const payload = validBody();
-      (payload.observation.metadata as { patient?: string }).patient = 'P'.repeat(256);
-
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/observations/submit',
-        payload,
-      });
-
-      expect(response.statusCode).toBe(400);
-      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+      // Unknown keys are stripped by the schema, not rejected
+      expect(response.statusCode).toBe(201);
     });
 
     it('returns 400 when observations has no time slots', async () => {
@@ -977,8 +954,8 @@ describe('POST /api/observations/submit', () => {
     });
 
     it('returns 400 for a per-subject observation not wrapped in an array', async () => {
-      // Without the structural guard, Zod's strip mode would drop
-      // subjectType/subjectId and re-attribute this slot to metadata.patient
+      // With the flat branch gone (stage 2D), a bare object fails the array
+      // schema outright — no silent re-attribution is possible
       const payload = validBody();
       (payload.observation.observations as Record<string, unknown>)['14:10'] = {
         subjectType: 'juvenile',
@@ -995,9 +972,7 @@ describe('POST /api/observations/submit', () => {
       });
 
       expect(response.statusCode).toBe(400);
-      const body = response.json();
-      expect(body.error.code).toBe('VALIDATION_ERROR');
-      expect(body.error.details[0].message).toContain('array of subject observations');
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
     });
 
     it('returns 400 for a slot with more than 20 subject entries', async () => {
@@ -1339,31 +1314,32 @@ describe('resolveAviary', () => {
     }
   };
 
-  it('resolves the seeded aviary by display name and by slug', async () => {
-    const byName = await resolveAviary("Sayyida's Cove");
+  it('resolves the seeded aviary by slug only (display names died in 2D)', async () => {
     const bySlug = await resolveAviary('sayyidas-cove');
+    const byName = await resolveAviary("Sayyida's Cove");
 
-    expect(byName?.name).toBe("Sayyida's Cove");
-    expect(bySlug?.id).toBe(byName?.id);
+    expect(bySlug?.name).toBe("Sayyida's Cove");
+    expect(byName).toBeNull();
   });
 
   it('returns null for an unknown value', async () => {
     expect(await resolveAviary('no-such-aviary')).toBeNull();
   });
 
-  it('prefers the display-name match when a value collides with another aviary\'s slug', async () => {
+  it('is unambiguous when a display name collides with another aviary\'s slug', async () => {
     await withTxn(async (db, client) => {
-      // Aviary A's display name equals aviary B's slug
-      const a = await client.query<{ id: string }>(
-        `INSERT INTO aviaries (slug, name) VALUES ('collision-a', 'collision-target') RETURNING id`
-      );
+      // Aviary A's display name equals aviary B's slug — slug-only lookup
+      // makes this deterministic: B wins, always
       await client.query(
-        `INSERT INTO aviaries (slug, name) VALUES ('collision-target', 'Collision B')`
+        `INSERT INTO aviaries (slug, name) VALUES ('collision-a', 'collision-target')`
+      );
+      const b = await client.query<{ id: string }>(
+        `INSERT INTO aviaries (slug, name) VALUES ('collision-target', 'Collision B') RETURNING id`
       );
 
       const resolved = await resolveAviary('collision-target', db);
-      expect(resolved?.id).toBe(a.rows[0]!.id);
-      expect(resolved?.name).toBe('collision-target');
+      expect(resolved?.id).toBe(b.rows[0]!.id);
+      expect(resolved?.name).toBe('Collision B');
     });
   });
 });
