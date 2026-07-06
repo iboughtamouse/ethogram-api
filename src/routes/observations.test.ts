@@ -1414,6 +1414,15 @@ describe('findNonResidentSubjects', () => {
       expect(await findNonResidentSubjects(aviaryId, '2026-02-01', ['Kestrel'], db)).toEqual(['Kestrel']);
       // Unknown names are always non-resident
       expect(await findNonResidentSubjects(aviaryId, '2026-01-15', ['Kestrel', 'Ghost'], db)).toEqual(['Ghost']);
+      // The generic unidentified-juvenile literal is NEVER reported, even
+      // with no matching subjects row (P2-D8 exemption) — a regression here
+      // would only warn-log, so CI would stay green without this pin
+      expect(
+        await findNonResidentSubjects(aviaryId, '2026-01-15', ['Juvenile'], db)
+      ).toEqual([]);
+      expect(
+        await findNonResidentSubjects(aviaryId, '2026-01-09', ['Juvenile', 'Kestrel'], db)
+      ).toEqual(['Kestrel']);
     } finally {
       await client.query('ROLLBACK');
       client.release();
