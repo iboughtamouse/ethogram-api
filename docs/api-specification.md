@@ -50,7 +50,7 @@ observation per hour** (in-memory; see [Rate limiting](#rate-limiting)).
 Download the stored observation as an Excel file.
 
 - **Responses:** `200` binary `.xlsx` (`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `Content-Disposition: attachment; filename="ethogram_<date>_<observer>.xlsx"`) · `404 NOT_FOUND` · `500 SERVER_ERROR`.
-- The workbook is a single `Ethogram Data` worksheet (behaviors as rows × 5-minute time slots as columns) — see [`excel.ts`](../src/services/excel.ts).
+- The workbook has **one worksheet per subject** (named after the subject, sanitized/truncated to Excel's 31-char rules), each the same behaviors-as-rows × 5-minute-time-slots-as-columns matrix with a `Subject(s): <name>` header — see [`excel.ts`](../src/services/excel.ts). Rows = the aviary's enabled behaviors plus any behavior present in the data.
 
 ## Error codes
 
