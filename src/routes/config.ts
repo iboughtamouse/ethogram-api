@@ -78,7 +78,10 @@ export const configRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { id: string } }>('/versions/:id', async (request, reply) => {
     const { id } = request.params;
 
-    if (!/^\d+$/.test(id)) {
+    // config_versions.id is int4: values past 2147483647 would overflow the
+    // parameterized query and surface as a Postgres error (500 + leaked pg
+    // message) instead of this route's clean 404.
+    if (!/^\d+$/.test(id) || Number(id) > 2147483647) {
       return reply.status(404).send({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Config version not found' },
