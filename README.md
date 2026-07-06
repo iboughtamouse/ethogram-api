@@ -1,6 +1,8 @@
 # Ethogram API
 
-Backend API for the WBS Ethogram observation system.
+Backend API for the WBS Ethogram observation system. This is the backend half of a
+two-service app — the React frontend ([`wbs-ethogram-form`](../wbs-ethogram-form), on Vercel)
+submits here. Cross-repo context and current focus live in [`ethogram-notes`](../ethogram-notes).
 
 ## Status
 
@@ -20,7 +22,7 @@ npm install
 cp .env.example .env  # Then edit with your credentials
 
 # Run migrations
-npm run migrate
+npm run db:migrate
 
 # Start dev server
 npm run dev

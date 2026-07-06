@@ -1,9 +1,14 @@
 # Database Schema Documentation
 
-**Last Updated:** December 24, 2025
-**Status:** ✅ PRODUCTION (deployed November 2025)
-**Database:** PostgreSQL 14+
+**Status:** ✅ Production (deployed on Railway)
+**Database:** PostgreSQL
 **Purpose:** Multi-subject behavioral observation data for WBS ethogram project
+
+> **Source of truth:** the DDL is [`migrations/001_initial_schema.sql`](../migrations/001_initial_schema.sql).
+> This doc explains it; if they disagree, the migration wins. Note: the `babies_present` and
+> `environmental_notes` columns are defined but **not written by the current submit endpoint**
+> (`src/routes/observations.ts` inserts neither, so they hold their defaults) — they are
+> reserved for future multi-subject / environmental capture.
 
 ---
 
@@ -145,15 +150,17 @@ The `time_slots` column stores multi-subject observations as a JSONB object:
     {
       "subjectType": "foster_parent",
       "subjectId": "Sayyida",
-      "behavior": "eating_food_platform",
-      "location": "",
+      "behavior": "eating",
+      "location": "F1",
       "notes": "Alert, watching stream",
       "object": "",
       "objectOther": "",
+      "objectInteractionType": "",
+      "objectInteractionTypeOther": "",
       "animal": "",
       "animalOther": "",
-      "interactionType": "",
-      "interactionTypeOther": "",
+      "animalInteractionType": "",
+      "animalInteractionTypeOther": "",
       "description": ""
     },
     {
@@ -180,16 +187,22 @@ The `time_slots` column stores multi-subject observations as a JSONB object:
 
 - `subjectType`: `"foster_parent"` | `"baby"` | `"juvenile"`
 - `subjectId`: Subject identifier (e.g., `"Sayyida"`, `"Baby"`)
-- `behavior`: Behavior code (e.g., `"resting_alert"`, `"eating_food_platform"`)
+- `behavior`: Behavior code (e.g., `"resting_alert"`, `"eating"`, `"walking"`). The canonical list is [`wbs-ethogram-form/src/constants/behaviors.js`](../../wbs-ethogram-form/src/constants/behaviors.js).
 - `location`: Location code (e.g., `"12"`, `"BB1"`, `"GROUND"`, or `""` if not required)
 - `notes`: Freeform notes
 - `object`: Inanimate object (when `behavior` is `"interacting_object"`)
 - `objectOther`: Custom object description (when `object` is `"other"`)
+- `objectInteractionType`: Interaction type for an object (when `behavior` is `"interacting_object"`)
+- `objectInteractionTypeOther`: Custom object interaction (when `objectInteractionType` is `"other"`)
 - `animal`: Animal type (when `behavior` is `"interacting_animal"`)
 - `animalOther`: Custom animal description (when `animal` is `"other"`)
-- `interactionType`: Interaction type (when `behavior` is `"interacting_animal"`)
-- `interactionTypeOther`: Custom interaction (when `interactionType` is `"other"`)
+- `animalInteractionType`: Interaction type for an animal (when `behavior` is `"interacting_animal"`)
+- `animalInteractionTypeOther`: Custom animal interaction (when `animalInteractionType` is `"other"`)
 - `description`: Detailed description (for behaviors requiring description)
+
+> **Note:** the split `objectInteractionType`/`animalInteractionType` fields replaced a single
+> legacy `interactionType` field (behavior cleanup, 2026-07-05). Rows migrated before that may
+> still carry an empty `interactionType`; the Excel exporter reads it as a fallback.
 
 ---
 
