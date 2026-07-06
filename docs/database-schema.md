@@ -4,11 +4,13 @@
 **Database:** PostgreSQL
 **Purpose:** Multi-subject behavioral observation data for WBS ethogram project
 
-> **Source of truth:** the DDL is [`migrations/001_initial_schema.sql`](../migrations/001_initial_schema.sql).
-> This doc explains it; if they disagree, the migration wins. Note: the `babies_present` and
-> `environmental_notes` columns are defined but **not written by the current submit endpoint**
-> (`src/routes/observations.ts` inserts neither, so they hold their defaults) — they are
-> reserved for future multi-subject / environmental capture.
+> **Source of truth:** the DDL is [`migrations/001_initial_schema.sql`](../migrations/001_initial_schema.sql)
+> plus the later files in [`migrations/`](../migrations). This doc describes the current shape; if they
+> disagree, the migrations win. Note: the original schema defined `babies_present` and
+> `environmental_notes` columns, but they were never written by app code and were **dropped by
+> [`migrations/004_drop_dormant_columns.sql`](../migrations/004_drop_dormant_columns.sql)**
+> (Phase 2 stage 2E, P2-D6) — dormancy was verified against production before the drop.
+> Multi-subject entry now records babies as first-class subjects in `time_slots`.
 
 ---
 
@@ -77,10 +79,6 @@ CREATE TABLE observations (
   aviary VARCHAR(255) NOT NULL,
   mode VARCHAR(10) NOT NULL CHECK (mode IN ('live', 'vod')),
 
-  -- Population context (for baby season - Phase 4+)
-  babies_present INTEGER NOT NULL DEFAULT 0 CHECK (babies_present >= 0),
-  environmental_notes TEXT,
-
   -- Multi-subject observation data (JSONB structure)
   time_slots JSONB NOT NULL,
 
@@ -105,10 +103,6 @@ CREATE TABLE observations (
   CONSTRAINT valid_observer_name_length CHECK (
     length(observer_name) BETWEEN 2 AND 32
   ),
-  CONSTRAINT valid_environmental_notes_length CHECK (
-    environmental_notes IS NULL
-    OR length(environmental_notes) <= 5000
-  ),
   CONSTRAINT valid_emails CHECK (
     emails IS NULL
     OR (array_length(emails, 1) BETWEEN 1 AND 10)
@@ -131,8 +125,6 @@ COMMENT ON TABLE observations IS 'Behavioral observations of birds in aviaries, 
 | `end_time`            | TIME         | No       | Observation session end time (24-hour format)                                 |
 | `aviary`              | VARCHAR(255) | No       | Aviary name (e.g., "Sayyida's Cove")                                          |
 | `mode`                | VARCHAR(10)  | No       | Observation mode: `live` or `vod`                                             |
-| `babies_present`      | INTEGER      | No       | Total number of babies in aviary (0 if none)                                  |
-| `environmental_notes` | TEXT         | Yes      | Freeform notes about context (weather, events, triggers), max 5000 characters |
 | `time_slots`          | JSONB        | No       | Multi-subject observation data (see structure below)                          |
 | `emails`              | TEXT[]       | Yes      | Array of email addresses for Excel delivery (1-10)                            |
 | `submitted_at`        | TIMESTAMPTZ  | No       | When observation was submitted to backend (UTC)                               |
@@ -266,11 +258,6 @@ CREATE INDEX idx_observations_aviary_date
 CREATE INDEX idx_observations_observer_date
   ON observations (observer_name, observation_date DESC);
 
--- Baby population queries (only index when babies present)
-CREATE INDEX idx_observations_babies_present
-  ON observations (babies_present)
-  WHERE babies_present > 0;
-
 -- User submissions (only index when authenticated)
 CREATE INDEX idx_observations_user
   ON observations (user_id)
@@ -295,7 +282,6 @@ CREATE INDEX idx_observations_time_slots_gin
 | `idx_observations_date_desc`      | Fast date range queries     | `WHERE observation_date BETWEEN ... ORDER BY observation_date DESC` |
 | `idx_observations_aviary_date`    | Aviary-specific dashboards  | `WHERE aviary = 'X' AND observation_date BETWEEN ...`               |
 | `idx_observations_observer_date`  | Observer history            | `WHERE observer_name = 'X' ORDER BY observation_date DESC`          |
-| `idx_observations_babies_present` | Population density analysis | `WHERE babies_present > 0`                                          |
 | `idx_observations_time_slots_gin` | JSONB containment queries   | `WHERE time_slots @> '...'`                                         |
 
 **Performance notes:**
@@ -322,9 +308,6 @@ CHECK (
   observation_date >= '2024-01-01'
   AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
 )
-
--- Number of babies cannot be negative
-CHECK (babies_present >= 0)
 
 -- Email count must be 1-10 (or NULL for download-only submissions)
 CHECK (
@@ -489,129 +472,21 @@ SELECT
 FROM observations;
 ```
 
-### Phase 2 Frontend-Backend Data Transformation
+### Wire Shape vs Storage Shape (historical)
 
-**Decision:** Database uses array structure `{"12:00": [{...}]}` even though Phase 2 frontend sends flat objects `{"12:00": {...}}`.
+**Decision:** the database has stored array-shaped time slots (`{"12:00": [{...}]}`)
+since day one, even while the original frontend sent flat single-subject objects.
+The API wrapped flat slots into one-element arrays (`transformObservations()`),
+attributing them to `metadata.patient`.
 
-**Context:**
-
-- **Phase 2 (Current):** Frontend only supports single-subject observations (Sayyida). Data is sent as flat objects per time slot:
-
-  ```javascript
-  {
-    "12:00": {
-      behavior: "resting_alert",
-      location: "12",
-      notes: "Alert, watching stream"
-    }
-  }
-  ```
-
-- **Phase 4 (Future):** Frontend will support multi-subject observations (foster parent + babies). Data will be sent as arrays:
-  ```javascript
-  {
-    "12:00": [
-      {
-        subjectType: "foster_parent",
-        subjectId: "Sayyida",
-        behavior: "resting_alert",
-        location: "12"
-      },
-      {
-        subjectType: "baby",
-        subjectId: "Baby",
-        behavior: "eating_elsewhere",
-        location: "BB1"
-      }
-    ]
-  }
-  ```
-
-**Why Use Array Structure Now?**
-
-- ✅ **No schema migration needed** - Phase 4 just adds more array elements
-- ✅ **Future-proof** - Database ready for multi-subject from day 1
-- ✅ **Clean separation** - Backend owns data shape, frontend adapts
-- ✅ **Simpler queries** - All queries work the same for Phase 2 and Phase 4
-
-**Transformation Strategy:**
-
-**Phase 2 (MVP - Single Subject):**
-
-- Frontend sends flat observation objects (no code changes required)
-- Backend API wraps each observation in array before storing:
-
-  ```javascript
-  // API receives from frontend:
-  { "12:00": { behavior: "resting_alert", location: "12" } }
-
-  // API transforms before storing:
-  {
-    "12:00": [{
-      subjectType: "foster_parent",
-      subjectId: "Sayyida",  // Hardcoded for Phase 2
-      behavior: "resting_alert",
-      location: "12"
-    }]
-  }
-  ```
-
-- Backend API unwraps array when returning data to frontend:
-
-  ```javascript
-  // Database stores:
-  { "12:00": [{ subjectType: "foster_parent", ... }] }
-
-  // API returns to frontend:
-  { "12:00": { behavior: "resting_alert", location: "12" } }
-  ```
-
-**Phase 4 (Multi-Subject):**
-
-- Frontend updated to send array structure directly
-- Backend removes transformation layer
-- No database migration required
-
-**Frontend Changes Needed (Phase 4):**
-
-1. **Update `formStateManager.js`:**
-   - Change `createEmptyObservation()` to return object with `subjectType`, `subjectId`
-   - Update `observations` state structure to support arrays per time slot
-
-2. **Update UI components:**
-   - Support multiple subject observations per time slot
-   - Add subject selector UI (foster parent vs babies)
-   - Handle dynamic subject addition/removal
-
-3. **Update validation:**
-   - Validate each subject in array independently
-   - Ensure at least one subject per time slot
-
-4. **Update Excel export:**
-   - One row per subject per time slot (instead of one row per time slot)
-
-**Migration Path:**
-
-```
-Phase 2: Frontend (flat) → API (transform) → Database (array)
-Phase 3: (No changes, add auth)
-Phase 4: Frontend (array) → API (passthrough) → Database (array)
-```
-
-**Why We Deferred Frontend Changes:**
-
-- ❌ **Breaking change** - Would require rewriting state management, validation, UI
-- ❌ **No current need** - Phase 2 only has one subject (Sayyida)
-- ❌ **Testing burden** - Comprehensive test suite would need updates
-- ✅ **Backend ready** - Database schema already supports multi-subject
-- ✅ **Clean cutover** - Phase 4 frontend changes are isolated, low risk
-
-**Tradeoff:**
-
-- ❌ Backend transformation adds complexity (wrapping/unwrapping)
-- ❌ Two different data shapes during transition period
-
-**Why we chose it:** Minimize Phase 2 risk, defer complexity until needed.
+**Resolution (Phase 2, 2026-07-06):** the frontend went array-native (stage 2C) and
+the flat wire shape plus the wrapping transform were **removed** (stage 2D). The wire
+shape now matches storage exactly: every slot is a non-empty array of per-subject
+observations (`subjectType`, `subjectId`, plus the field set) — see
+[`api-specification.md`](api-specification.md) for the current contract. Historical
+rows are indistinguishable from new ones: the trigger `validate_time_slots` has always
+enforced the array shape, so no data migration was ever needed — exactly the payoff the
+original decision was betting on.
 
 ---
 
@@ -626,8 +501,7 @@ SELECT
   observation_date,
   start_time,
   end_time,
-  aviary,
-  babies_present
+  aviary
 FROM observations
 WHERE aviary = 'Sayyida''s Cove'
   AND observation_date BETWEEN '2025-11-01' AND '2025-11-30'
@@ -668,42 +542,13 @@ GROUP BY subject->>'location'
 ORDER BY count DESC;
 ```
 
-### 4. Aggression Rate by Population Density
-
-```sql
-WITH aggression_slots AS (
-  SELECT
-    o.babies_present,
-    COUNT(*) AS total_slots,
-    COUNT(*) FILTER (
-      WHERE subject->>'behavior' LIKE '%aggression%'
-         OR subject->>'behavior' LIKE '%conflict%'
-    ) AS aggression_events
-  FROM observations o,
-    jsonb_each(o.time_slots) AS ts(time_key, subjects),
-    jsonb_array_elements(subjects) AS subject
-  WHERE o.aviary = 'Sayyida''s Cove'
-    AND o.babies_present > 0
-    AND subject->>'subjectType' = 'baby'
-  GROUP BY o.babies_present
-)
-SELECT
-  babies_present,
-  total_slots,
-  aggression_events,
-  ROUND(100.0 * aggression_events / NULLIF(total_slots, 0), 2) AS aggression_rate
-FROM aggression_slots
-ORDER BY babies_present;
-```
-
-### 5. Observations with Foster Parent Present
+### 4. Observations with Foster Parent Present
 
 ```sql
 SELECT
   id,
   observer_name,
-  observation_date,
-  babies_present
+  observation_date
 FROM observations
 WHERE aviary = 'Sayyida''s Cove'
   AND EXISTS (
@@ -714,7 +559,7 @@ WHERE aviary = 'Sayyida''s Cove'
 ORDER BY observation_date DESC;
 ```
 
-### 6. Enrichment Engagement Frequency
+### 5. Enrichment Engagement Frequency
 
 ```sql
 SELECT
@@ -732,7 +577,7 @@ GROUP BY subject->>'object'
 ORDER BY interactions DESC;
 ```
 
-### 7. Leaderboard (Authenticated Users Only)
+### 6. Leaderboard (Authenticated Users Only)
 
 ```sql
 SELECT
@@ -764,8 +609,6 @@ LIMIT 10;
   "end_time": "15:30",
   "aviary": "Sayyida's Cove",
   "mode": "live",
-  "babies_present": 0,
-  "environmental_notes": null,
   "time_slots": {
     "15:00": [
       {
@@ -809,7 +652,7 @@ LIMIT 10;
 
 ### Phase 4 Example (Sayyida + 2 Babies)
 
-**Note on Baby Identifiers:** All babies use generic `subjectId: "Baby"` because observers cannot reliably distinguish individual babies across time slots within a session. Using distinct identifiers (Baby1, Baby2) would imply tracking capability that doesn't exist, leading to inconsistent or misleading data. The `babies_present` count captures the total number without requiring individual identification.
+**Note on Baby Identifiers:** Since Phase 2 multi-subject entry, babies are recorded as first-class subjects in `time_slots` with real `subjectId` values (their subject names) — there is no separate count column.
 
 ```json
 {
@@ -820,8 +663,6 @@ LIMIT 10;
   "end_time": "10:10",
   "aviary": "Sayyida's Cove",
   "mode": "live",
-  "babies_present": 2,
-  "environmental_notes": "First day babies out of nest box, sunny weather",
   "time_slots": {
     "10:00": [
       {
@@ -1117,7 +958,6 @@ User submits future date (2030-01-01):
 ⚠️ **JSONB validation is complex** - Trigger needed for strict validation
 ⚠️ **Unnesting arrays is verbose** - Queries need multiple joins/unnests
 ⚠️ **No schema enforcement** - JSONB structure can drift (mitigated by trigger)
-⚠️ **Individual baby tracking limited** - Babies not individually identified (by design)
 
 ---
 

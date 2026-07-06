@@ -62,13 +62,25 @@ describe('config seed (migrations 002 + 003)', () => {
     expect(ground.rows[0]).toEqual({ label: 'Ground', perch_group: 'Common Locations' });
   });
 
-  it('seeds Sayyida as an open foster_parent episode', async () => {
+  it('seeds Sayyida + the 2026 juveniles as open episodes (migrations 003 + 005)', async () => {
     const result = await query<{ name: string; species: string; subject_type: string; departed_on: string | null }>(
-      `SELECT name, species, subject_type, departed_on::text FROM subjects`
+      `SELECT name, species, subject_type, departed_on::text FROM subjects ORDER BY subject_type, name`
     );
     expect(result.rows).toEqual([
       { name: 'Sayyida', species: 'Barred Owl', subject_type: 'foster_parent', departed_on: null },
+      { name: '187(B)', species: 'Barred Owl', subject_type: 'juvenile', departed_on: null },
+      { name: '216(O)', species: 'Barred Owl', subject_type: 'juvenile', departed_on: null },
+      { name: '253(R)', species: 'Barred Owl', subject_type: 'juvenile', departed_on: null },
     ]);
+  });
+
+  it('publishes config v2 with all four subjects (migration 005)', async () => {
+    const result = await query<{ id: number; subject_count: number }>(
+      `SELECT id, jsonb_array_length(config->'aviaries'->0->'subjects') AS subject_count
+       FROM config_versions ORDER BY id DESC LIMIT 1`
+    );
+    expect(result.rows[0]!.id).toBeGreaterThanOrEqual(2);
+    expect(result.rows[0]!.subject_count).toBe(4);
   });
 
   it("enables the full catalog for Sayyida's Cove", async () => {
