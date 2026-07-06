@@ -12,10 +12,16 @@ vi.mock('../services/email.js', () => ({
   sendObservationEmail: vi.fn().mockResolvedValue({ success: true, messageId: 'mock-id' }),
 }));
 
-// Mock the Excel service to avoid running real generation in tests
-vi.mock('../services/excel.js', () => ({
-  generateExcelBuffer: vi.fn().mockResolvedValue(Buffer.from('mock-excel-data')),
-}));
+// Mock the Excel service to avoid running real generation in tests.
+// Only generateExcelBuffer is mocked — the route also uses the module's
+// pure helpers (subjectIdsInSlotOrder), which must stay real.
+vi.mock('../services/excel.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/excel.js')>();
+  return {
+    ...actual,
+    generateExcelBuffer: vi.fn().mockResolvedValue(Buffer.from('mock-excel-data')),
+  };
+});
 
 const mockSendObservationEmail = vi.mocked(sendObservationEmail);
 const mockGenerateExcelBuffer = vi.mocked(generateExcelBuffer);
