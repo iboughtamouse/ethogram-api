@@ -154,7 +154,7 @@ describe('config seed (migrations 002 + 003)', () => {
       'SELECT config FROM config_versions ORDER BY id LIMIT 1'
     );
 
-    const rows = behaviorRowsFor(result.rows[0]!.config, "Sayyida's Cove");
+    const rows = behaviorRowsFor(result.rows[0]!.config, "Sayyida's Cove", {});
     expect(rows).toEqual(EXPECTED_BEHAVIOR_ROWS);
   });
 

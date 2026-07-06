@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { buildApp } from '../app.js';
-import { query, closePool } from '../db/index.js';
+import { pool, query, closePool } from '../db/index.js';
 import type { FastifyInstance } from 'fastify';
+import { resolveAviary, findNonResidentSubjects } from './observations.js';
 import { sendObservationEmail } from '../services/email.js';
 import { generateExcelBuffer } from '../services/excel.js';
 import { clearAllRateLimits } from '../utils/rateLimit.js';
@@ -11,10 +12,16 @@ vi.mock('../services/email.js', () => ({
   sendObservationEmail: vi.fn().mockResolvedValue({ success: true, messageId: 'mock-id' }),
 }));
 
-// Mock the Excel service to avoid running real generation in tests
-vi.mock('../services/excel.js', () => ({
-  generateExcelBuffer: vi.fn().mockResolvedValue(Buffer.from('mock-excel-data')),
-}));
+// Mock the Excel service to avoid running real generation in tests.
+// Only generateExcelBuffer is mocked — the route also uses the module's
+// pure helpers (subjectIdsInSlotOrder), which must stay real.
+vi.mock('../services/excel.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/excel.js')>();
+  return {
+    ...actual,
+    generateExcelBuffer: vi.fn().mockResolvedValue(Buffer.from('mock-excel-data')),
+  };
+});
 
 const mockSendObservationEmail = vi.mocked(sendObservationEmail);
 const mockGenerateExcelBuffer = vi.mocked(generateExcelBuffer);
@@ -703,10 +710,336 @@ describe('POST /api/observations/submit', () => {
     });
 
     expect(response.statusCode).toBe(201);
-    
+
     const body = response.json();
     expect(body.emailsSent).toBe(0); // No emails sent when Excel fails
     expect(mockSendObservationEmail).not.toHaveBeenCalled();
+  });
+
+  describe('array-native slots (Phase 2 stage 2A)', () => {
+    // Array-native request: no metadata.patient, aviary sent as the slug
+    const validArrayBody = () => ({
+      observation: {
+        metadata: {
+          observerName: 'TestObserver',
+          date: '2025-11-29',
+          startTime: '14:00',
+          endTime: '14:30',
+          aviary: 'sayyidas-cove',
+          mode: 'live' as const,
+        },
+        observations: {
+          '14:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              location: '12',
+              notes: 'Alert on perch',
+            },
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'Juvenile 1',
+              behavior: 'flying',
+              location: '',
+              notes: '',
+            },
+          ],
+          '14:05': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'flying',
+              location: '',
+              notes: '',
+            },
+          ],
+        },
+        submittedAt: '2025-11-29T20:00:00.000Z',
+      },
+      emails: ['test@example.com'],
+    });
+
+    it('accepts array slots without metadata.patient and resolves the aviary slug', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ aviary: string; aviary_id: string | null }>(
+        'SELECT aviary, aviary_id FROM observations'
+      );
+      const row = result.rows[0]!;
+      // The varchar column receives the display name, not the slug
+      expect(row.aviary).toBe("Sayyida's Cove");
+      expect(row.aviary_id).not.toBeNull();
+    });
+
+    it('stores array slots as sent, preserving every subject', async () => {
+      await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      const result = await query<{ time_slots: Record<string, unknown[]> }>(
+        'SELECT time_slots FROM observations'
+      );
+
+      const slot = result.rows[0]!.time_slots['14:00']!;
+      expect(slot).toHaveLength(2);
+      expect(slot[0]).toMatchObject({
+        subjectType: 'foster_parent',
+        subjectId: 'Sayyida',
+        behavior: 'resting_alert',
+        location: '12',
+      });
+      expect(slot[1]).toMatchObject({
+        subjectType: 'juvenile',
+        subjectId: 'Juvenile 1',
+        behavior: 'flying',
+      });
+    });
+
+    it('accepts mixed flat and array slots when patient is present', async () => {
+      const payload = validArrayBody();
+      (payload.observation.metadata as { patient?: string }).patient = 'Sayyida';
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = {
+        behavior: 'preening',
+        location: '3',
+        notes: '',
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ time_slots: Record<string, unknown[]> }>(
+        'SELECT time_slots FROM observations'
+      );
+      const timeSlots = result.rows[0]!.time_slots;
+      // Array slot passed through untouched
+      expect(timeSlots['14:00']).toHaveLength(2);
+      // Flat slot wrapped with the metadata patient
+      expect(timeSlots['14:10']).toHaveLength(1);
+      expect(timeSlots['14:10']![0]).toMatchObject({
+        subjectType: 'foster_parent',
+        subjectId: 'Sayyida',
+        behavior: 'preening',
+      });
+    });
+
+    it('returns 400 when flat slots are sent without metadata.patient', async () => {
+      const payload = validBody();
+      delete (payload.observation.metadata as { patient?: string }).patient;
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for an empty array slot', async () => {
+      const payload = validArrayBody();
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = [];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for an array entry without subject identity', async () => {
+      const payload = validArrayBody();
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = [
+        { behavior: 'flying', location: '', notes: '' },
+      ];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('accepts subjects not resident in the aviary (warn-only, P2-D5)', async () => {
+      const payload = validArrayBody();
+      payload.observation.observations['14:05']![0]!.subjectId = 'Definitely Not Resident';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ time_slots: Record<string, unknown[]> }>(
+        'SELECT time_slots FROM observations'
+      );
+      expect(result.rows[0]!.time_slots['14:05']![0]).toMatchObject({
+        subjectId: 'Definitely Not Resident',
+      });
+    });
+
+    it('derives the email patient label from the subject list when patient is absent', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(mockSendObservationEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          patient: 'Sayyida, Juvenile 1',
+        })
+      );
+    });
+
+    it('passes an unknown aviary value through to the varchar column unchanged', async () => {
+      const payload = validArrayBody();
+      payload.observation.metadata.aviary = 'some-future-aviary';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ aviary: string; aviary_id: string | null }>(
+        'SELECT aviary, aviary_id FROM observations'
+      );
+      expect(result.rows[0]!.aviary).toBe('some-future-aviary');
+      expect(result.rows[0]!.aviary_id).toBeNull();
+    });
+
+    it('returns 400 for an empty patient string with flat slots', async () => {
+      const payload = validBody();
+      (payload.observation.metadata as { patient?: string }).patient = '';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for a patient exceeding 255 characters', async () => {
+      const payload = validBody();
+      (payload.observation.metadata as { patient?: string }).patient = 'P'.repeat(256);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 when observations has no time slots', async () => {
+      const payload = validArrayBody();
+      (payload.observation as { observations: unknown }).observations = {};
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for a per-subject observation not wrapped in an array', async () => {
+      // Without the structural guard, Zod's strip mode would drop
+      // subjectType/subjectId and re-attribute this slot to metadata.patient
+      const payload = validBody();
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = {
+        subjectType: 'juvenile',
+        subjectId: 'Juvenile 1',
+        behavior: 'flying',
+        location: '',
+        notes: '',
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = response.json();
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details[0].message).toContain('array of subject observations');
+    });
+
+    it('returns 400 for a slot with more than 20 subject entries', async () => {
+      const payload = validArrayBody();
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = Array.from(
+        { length: 21 },
+        (_, i) => ({
+          subjectType: 'juvenile',
+          subjectId: `Juvenile ${i + 1}`,
+          behavior: 'flying',
+          location: '',
+          notes: '',
+        })
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('passes the resolved display name and derived patient label to Excel generation', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(mockGenerateExcelBuffer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            aviary: "Sayyida's Cove",
+            patient: 'Sayyida, Juvenile 1',
+          }),
+        })
+      );
+    });
   });
 });
 
@@ -739,6 +1072,41 @@ describe('POST /api/observations/:id/share', () => {
     expect(mockGenerateExcelBuffer).toHaveBeenCalledTimes(1);
   });
 
+  it('derives the patient label from all subjects in the row (same rule as submit)', async () => {
+    const result = await query<{ id: string }>(
+      `INSERT INTO observations (
+        observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [
+        'TestObserver',
+        '2025-11-29',
+        '14:00',
+        '14:30',
+        "Sayyida's Cove",
+        'live',
+        JSON.stringify({
+          '14:00': [
+            { subjectType: 'foster_parent', subjectId: 'Sayyida', behavior: 'resting', location: '5', notes: '' },
+            { subjectType: 'juvenile', subjectId: 'Juvenile 1', behavior: 'flying', location: '', notes: '' },
+          ],
+        }),
+        '2025-11-29T20:00:00.000Z',
+      ]
+    );
+    const id = result.rows[0]!.id;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/observations/${id}/share`,
+      payload: { emails: ['user@example.com'] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockSendObservationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ patient: 'Sayyida, Juvenile 1' })
+    );
+  });
+
   it('returns 404 for non-existent observation', async () => {
     const fakeId = '00000000-0000-0000-0000-000000000000';
 
@@ -753,6 +1121,17 @@ describe('POST /api/observations/:id/share', () => {
     const body = response.json();
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns 404 (not 500) for a malformed observation id', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/not-a-uuid/share',
+      payload: { emails: ['user@example.com'] },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('NOT_FOUND');
   });
 
   it('returns 400 for invalid email', async () => {
@@ -916,6 +1295,16 @@ describe('GET /api/observations/:id/excel', () => {
     expect(body.error.code).toBe('NOT_FOUND');
   });
 
+  it('returns 404 (not 500) for a malformed observation id', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/observations/not-a-uuid/excel',
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('NOT_FOUND');
+  });
+
   it('returns 500 when Excel generation fails', async () => {
     const id = await insertTestObservation();
     mockGenerateExcelBuffer.mockRejectedValue(new Error('Excel generation failed'));
@@ -930,5 +1319,90 @@ describe('GET /api/observations/:id/excel', () => {
     const body = response.json();
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('SERVER_ERROR');
+  });
+});
+
+// The resolution helpers run inside rolled-back transactions so the seeded
+// aviary/subject state other test files assert on is never disturbed.
+describe('resolveAviary', () => {
+  const withTxn = async (fn: (db: { query: typeof pool.query }, client: import('pg').PoolClient) => Promise<void>) => {
+    const client = await pool.connect();
+    const db = {
+      query: ((text: string, params?: unknown[]) => client.query(text, params)) as typeof pool.query,
+    };
+    try {
+      await client.query('BEGIN');
+      await fn(db, client);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  };
+
+  it('resolves the seeded aviary by display name and by slug', async () => {
+    const byName = await resolveAviary("Sayyida's Cove");
+    const bySlug = await resolveAviary('sayyidas-cove');
+
+    expect(byName?.name).toBe("Sayyida's Cove");
+    expect(bySlug?.id).toBe(byName?.id);
+  });
+
+  it('returns null for an unknown value', async () => {
+    expect(await resolveAviary('no-such-aviary')).toBeNull();
+  });
+
+  it('prefers the display-name match when a value collides with another aviary\'s slug', async () => {
+    await withTxn(async (db, client) => {
+      // Aviary A's display name equals aviary B's slug
+      const a = await client.query<{ id: string }>(
+        `INSERT INTO aviaries (slug, name) VALUES ('collision-a', 'collision-target') RETURNING id`
+      );
+      await client.query(
+        `INSERT INTO aviaries (slug, name) VALUES ('collision-target', 'Collision B')`
+      );
+
+      const resolved = await resolveAviary('collision-target', db);
+      expect(resolved?.id).toBe(a.rows[0]!.id);
+      expect(resolved?.name).toBe('collision-target');
+    });
+  });
+});
+
+describe('findNonResidentSubjects', () => {
+  it('returns an empty list without querying when no subjects are given', async () => {
+    expect(await findNonResidentSubjects('00000000-0000-0000-0000-000000000000', '2026-01-01', [])).toEqual([]);
+  });
+
+  it('applies half-open residency episodes [arrived_on, departed_on)', async () => {
+    const client = await pool.connect();
+    const db = {
+      query: ((text: string, params?: unknown[]) => client.query(text, params)) as typeof pool.query,
+    };
+    try {
+      await client.query('BEGIN');
+      const aviary = await client.query<{ id: string }>(
+        `INSERT INTO aviaries (slug, name) VALUES ('residency-test', 'Residency Test') RETURNING id`
+      );
+      const aviaryId = aviary.rows[0]!.id;
+      await client.query(
+        `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on, departed_on)
+         VALUES ($1, 'Kestrel', 'American Kestrel', 'juvenile', '2026-01-10', '2026-02-01')`,
+        [aviaryId]
+      );
+
+      // Before arrival: not resident
+      expect(await findNonResidentSubjects(aviaryId, '2026-01-09', ['Kestrel'], db)).toEqual(['Kestrel']);
+      // On the arrival date: resident
+      expect(await findNonResidentSubjects(aviaryId, '2026-01-10', ['Kestrel'], db)).toEqual([]);
+      // Day before departure: resident
+      expect(await findNonResidentSubjects(aviaryId, '2026-01-31', ['Kestrel'], db)).toEqual([]);
+      // On the departure date: no longer resident (half-open)
+      expect(await findNonResidentSubjects(aviaryId, '2026-02-01', ['Kestrel'], db)).toEqual(['Kestrel']);
+      // Unknown names are always non-resident
+      expect(await findNonResidentSubjects(aviaryId, '2026-01-15', ['Kestrel', 'Ghost'], db)).toEqual(['Ghost']);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 });

@@ -66,18 +66,21 @@ describe('Excel Service', () => {
   describe('generateExcelWorkbook', () => {
     it('should create a workbook with correct metadata', async () => {
       const workbook = await generateExcelWorkbook(sampleObservation);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       expect(worksheet).toBeDefined();
+      expect(workbook.worksheets).toHaveLength(1);
       expect(worksheet?.getCell('A1').value).toBe('Rehabilitation Raptor Ethogram');
       expect(worksheet?.getCell('C1').value).toBe('2025-11-29');
       expect(worksheet?.getCell('K1').value).toBe('10:00 - 10:30');
+      expect(worksheet?.getCell('A2').value).toBe("Aviary: Sayyida's Cove");
+      expect(worksheet?.getCell('B2').value).toBe('Subject(s): Sayyida');
       expect(worksheet?.getCell('K2').value).toBe('Test Observer');
     });
 
     it('should generate correct time slot headers', async () => {
       const workbook = await generateExcelWorkbook(sampleObservation);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Row 4 should have actual timestamps (not relative)
       expect(worksheet?.getCell('B4').value).toBe('10:00');
@@ -91,7 +94,7 @@ describe('Excel Service', () => {
 
     it('should mark observations in correct cells', async () => {
       const workbook = await generateExcelWorkbook(sampleObservation);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // resting_alert is row 18 (5 + 13), 10:00 is column B (index 2)
       // Let's find the row by checking values
@@ -115,7 +118,7 @@ describe('Excel Service', () => {
 
     it('should format interacting_object observations correctly', async () => {
       const workbook = await generateExcelWorkbook(sampleObservation);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Find the interacting_object row
       let objectRow = 0;
@@ -141,7 +144,7 @@ describe('Excel Service', () => {
 
     it('should format interacting_animal observations correctly', async () => {
       const workbook = await generateExcelWorkbook(sampleObservation);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Find the interacting_animal row
       let animalRow = 0;
@@ -184,7 +187,7 @@ describe('Excel Service', () => {
       };
 
       const workbook = await generateExcelWorkbook(dataWithObjectInteraction);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       let objectRow = 0;
       for (let row = 5; row <= 30; row++) {
@@ -233,7 +236,7 @@ describe('Excel Service', () => {
       };
 
       const workbook = await generateExcelWorkbook(dataWithOther);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Find interacting_object row
       let objectRow = 0;
@@ -285,7 +288,7 @@ describe('Excel Service', () => {
       };
 
       const workbook = await generateExcelWorkbook(dataWithMissingOther);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       let objectRow = 0;
       for (let row = 5; row <= 30; row++) {
@@ -321,7 +324,7 @@ describe('Excel Service', () => {
       };
 
       const workbook = await generateExcelWorkbook(dataWithDescription);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Find "Other" behavior row
       let otherRow = 0;
@@ -369,7 +372,7 @@ describe('Excel Service', () => {
       };
 
       const workbook = await generateExcelWorkbook(midnightData);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Time headers should show actual timestamps (not relative)
       expect(worksheet?.getCell('B4').value).toBe('23:50');
@@ -398,7 +401,7 @@ describe('Excel Service', () => {
       };
 
       const workbook = await generateExcelWorkbook(emptyData);
-      const worksheet = workbook.getWorksheet('Ethogram Data');
+      const worksheet = workbook.getWorksheet('Sayyida');
 
       // Should still create the workbook with headers
       expect(worksheet?.getCell('A1').value).toBe('Rehabilitation Raptor Ethogram');
@@ -408,29 +411,361 @@ describe('Excel Service', () => {
   });
 
   describe('behaviorRowsFor', () => {
+    const smallConfig = {
+      behaviors: [
+        { value: 'flying', excelRowLabel: 'Locomotion - Flying', excelRowOrder: 8 },
+        { value: 'eating', excelRowLabel: 'Eating (Note Location)', excelRowOrder: 1 },
+        { value: 'other', excelRowLabel: 'Other', excelRowOrder: 23 },
+      ],
+      aviaries: [
+        { name: 'Small Aviary', vocabulary: { behaviors: ['eating', 'other'] } },
+      ],
+    };
+
     it('filters rows to the aviary\'s enabled behaviors, in excelRowOrder', () => {
-      const config = {
-        behaviors: [
-          { value: 'flying', excelRowLabel: 'Locomotion - Flying', excelRowOrder: 8 },
-          { value: 'eating', excelRowLabel: 'Eating (Note Location)', excelRowOrder: 1 },
-          { value: 'other', excelRowLabel: 'Other', excelRowOrder: 23 },
-        ],
-        aviaries: [
-          { name: 'Small Aviary', vocabulary: { behaviors: ['eating', 'other'] } },
+      expect(behaviorRowsFor(smallConfig, 'Small Aviary', {})).toEqual([
+        { value: 'eating', label: 'Eating (Note Location)' },
+        { value: 'other', label: 'Other' },
+      ]);
+    });
+
+    it('keeps a disabled behavior\'s row when it is present in the data (Phase 2 §4 alignment)', () => {
+      const observations = {
+        '10:00': [
+          {
+            subjectType: 'foster_parent' as const,
+            subjectId: 'Sayyida',
+            behavior: 'flying',
+          },
         ],
       };
 
-      expect(behaviorRowsFor(config, 'Small Aviary')).toEqual([
+      expect(behaviorRowsFor(smallConfig, 'Small Aviary', observations)).toEqual([
+        { value: 'eating', label: 'Eating (Note Location)' },
+        { value: 'flying', label: 'Locomotion - Flying' },
+        { value: 'other', label: 'Other' },
+      ]);
+    });
+
+    it('ignores data values absent from the catalog (no label to render)', () => {
+      const observations = {
+        '10:00': [
+          {
+            subjectType: 'foster_parent' as const,
+            subjectId: 'Sayyida',
+            behavior: 'not_in_catalog',
+          },
+        ],
+      };
+
+      expect(behaviorRowsFor(smallConfig, 'Small Aviary', observations)).toEqual([
         { value: 'eating', label: 'Eating (Note Location)' },
         { value: 'other', label: 'Other' },
       ]);
     });
 
     it('falls back to the full catalog for an aviary the config does not know', () => {
-      const rows = behaviorRowsFor(TEST_CONFIG, 'Some Unknown Aviary');
+      const rows = behaviorRowsFor(TEST_CONFIG, 'Some Unknown Aviary', {});
       expect(rows).toHaveLength(23);
       expect(rows[0]).toEqual({ value: 'eating', label: 'Eating (Note Location)' });
       expect(rows[22]).toEqual({ value: 'other', label: 'Other' });
+    });
+  });
+
+  describe('multi-subject workbooks (P2-D3)', () => {
+    const multiSubjectObservation = {
+      metadata: {
+        observerName: 'Test Observer',
+        date: '2025-11-29',
+        startTime: '10:00',
+        endTime: '10:10',
+        aviary: "Sayyida's Cove",
+        patient: 'Sayyida, Juvenile 1',
+        mode: 'live' as const,
+      },
+      observations: {
+        '10:00': [
+          {
+            subjectType: 'foster_parent' as const,
+            subjectId: 'Sayyida',
+            behavior: 'resting_alert',
+            location: '5',
+            notes: 'Watching',
+          },
+          {
+            subjectType: 'juvenile' as const,
+            subjectId: 'Juvenile 1',
+            behavior: 'resting_alert',
+            location: '12',
+            notes: 'Also watching',
+          },
+        ],
+        '10:05': [
+          {
+            subjectType: 'juvenile' as const,
+            subjectId: 'Juvenile 1',
+            behavior: 'flying',
+          },
+        ],
+      },
+      submittedAt: '2025-11-29T15:00:00.000Z',
+      config: TEST_CONFIG,
+    };
+
+    it('creates one worksheet per subject, in slot order', async () => {
+      const workbook = await generateExcelWorkbook(multiSubjectObservation);
+
+      expect(workbook.worksheets.map((ws) => ws.name)).toEqual(['Sayyida', 'Juvenile 1']);
+    });
+
+    it('renders each subject\'s own data in its sheet, including a shared behavior/slot', async () => {
+      const workbook = await generateExcelWorkbook(multiSubjectObservation);
+      const sayyida = workbook.getWorksheet('Sayyida');
+      const juvenile = workbook.getWorksheet('Juvenile 1');
+
+      // Find the resting_alert row (same row index on both sheets — identical matrix)
+      let restingRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (
+          sayyida?.getCell(row, 1).value ===
+          'Resting on Perch/Ground - Alert (Note Location)'
+        ) {
+          restingRow = row;
+          break;
+        }
+      }
+      expect(restingRow).toBeGreaterThan(0);
+      expect(juvenile?.getCell(restingRow, 1).value).toBe(
+        'Resting on Perch/Ground - Alert (Note Location)'
+      );
+
+      // 10:00 is column B — each sheet carries its own subject's details
+      expect(sayyida?.getCell(restingRow, 2).value).toContain('Loc: 5');
+      expect(sayyida?.getCell(restingRow, 2).value).toContain('Notes: Watching');
+      expect(juvenile?.getCell(restingRow, 2).value).toContain('Loc: 12');
+      expect(juvenile?.getCell(restingRow, 2).value).toContain('Notes: Also watching');
+
+      // 10:05 flying belongs to the juvenile only
+      let flyingRow = 0;
+      for (let row = 5; row <= 30; row++) {
+        if (sayyida?.getCell(row, 1).value === 'Locomotion - Flying') {
+          flyingRow = row;
+          break;
+        }
+      }
+      expect(juvenile?.getCell(flyingRow, 3).value).toContain('x');
+      expect(sayyida?.getCell(flyingRow, 3).value).toBeNull();
+    });
+
+    it('labels each sheet\'s header with its own full subject name', async () => {
+      const workbook = await generateExcelWorkbook(multiSubjectObservation);
+
+      expect(workbook.getWorksheet('Sayyida')?.getCell('B2').value).toBe(
+        'Subject(s): Sayyida'
+      );
+      expect(workbook.getWorksheet('Juvenile 1')?.getCell('B2').value).toBe(
+        'Subject(s): Juvenile 1'
+      );
+    });
+
+    it('strips a boundary apostrophe re-exposed by truncation', async () => {
+      // The 28th character lands exactly on the possessive apostrophe
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: "Juvenile Barred Owl Sayyida's Baby",
+              behavior: 'flying',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const name = workbook.worksheets[0]!.name;
+      expect(name.endsWith("'")).toBe(false);
+      expect(name.startsWith("'")).toBe(false);
+    });
+
+    it('avoids ExcelJS\'s reserved sheet name "History"', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'History',
+              behavior: 'flying',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      expect(workbook.worksheets[0]!.name).not.toBe('History');
+      expect(workbook.worksheets[0]!.getCell('B2').value).toBe(
+        'Subject(s): History'
+      );
+    });
+
+    it('orders sheets by chronological slot order regardless of key insertion order', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          // Keys deliberately out of order — client JSON key order and
+          // Postgres jsonb key order must both produce the same workbook
+          '10:05': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'Juvenile 1',
+              behavior: 'flying',
+            },
+          ],
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      expect(workbook.worksheets.map((ws) => ws.name)).toEqual([
+        'Sayyida',
+        'Juvenile 1',
+      ]);
+    });
+
+    it('renders every entry when one subject has duplicate behavior entries in a slot', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              notes: 'first entry',
+            },
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              notes: 'second entry',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const sheet = workbook.getWorksheet('Sayyida');
+      let row = 0;
+      for (let r = 5; r <= 30; r++) {
+        if (
+          sheet?.getCell(r, 1).value ===
+          'Resting on Perch/Ground - Alert (Note Location)'
+        ) {
+          row = r;
+          break;
+        }
+      }
+      expect(sheet?.getCell(row, 2).value).toContain('first entry');
+      expect(sheet?.getCell(row, 2).value).toContain('second entry');
+    });
+
+    it('groups entries missing a subjectId under Unknown instead of crashing', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            // Malformed hand-written row: no subject identity
+            { behavior: 'flying' } as never,
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      expect(workbook.worksheets[0]!.name).toBe('Unknown');
+    });
+
+    it('applies the enabled-union-present row filter through the workbook entry point', async () => {
+      const scopedConfig = {
+        behaviors: [
+          { value: 'eating', excelRowLabel: 'Eating (Note Location)', excelRowOrder: 1 },
+          { value: 'flying', excelRowLabel: 'Locomotion - Flying', excelRowOrder: 8 },
+          { value: 'other', excelRowLabel: 'Other', excelRowOrder: 23 },
+        ],
+        aviaries: [
+          {
+            name: "Sayyida's Cove",
+            vocabulary: { behaviors: ['eating'] },
+          },
+        ],
+      };
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              // Present in the data but NOT enabled — must still get a row
+              behavior: 'flying',
+            },
+          ],
+        },
+        config: scopedConfig,
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const sheet = workbook.worksheets[0]!;
+      expect(sheet.getCell('A5').value).toBe('Eating (Note Location)');
+      expect(sheet.getCell('A6').value).toBe('Locomotion - Flying');
+      // 'other' is neither enabled nor present — no row
+      expect(sheet.getCell('A7').value).toBeNull();
+    });
+
+    it('sanitizes, truncates, and de-duplicates worksheet names', async () => {
+      const longNameA = 'A Very Long Juvenile Subject Name Indeed [Band 1]';
+      const longNameB = 'A Very Long Juvenile Subject Name Indeed [Band 2]';
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'Kes: trel?',
+              behavior: 'flying',
+            },
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: longNameA,
+              behavior: 'flying',
+            },
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: longNameB,
+              behavior: 'flying',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const names = workbook.worksheets.map((ws) => ws.name);
+
+      // Forbidden characters replaced, whitespace collapsed
+      expect(names[0]).toBe('Kes trel');
+      // Truncated to <= 28 chars; identical prefixes get numeric suffixes
+      expect(names[1]!.length).toBeLessThanOrEqual(28);
+      expect(names[2]).toBe(`${names[1]} 2`);
+      // Full names survive in each sheet's header row
+      expect(workbook.worksheets[1]!.getCell('B2').value).toBe(`Subject(s): ${longNameA}`);
+      expect(workbook.worksheets[2]!.getCell('B2').value).toBe(`Subject(s): ${longNameB}`);
     });
   });
 

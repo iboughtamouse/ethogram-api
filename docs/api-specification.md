@@ -34,8 +34,8 @@ Store one observation session; if `emails` are provided, generate an Excel and e
 
 - **Body:** `submitObservationSchema` — `{ observation: { metadata, observations, submittedAt }, emails? }`.
   See [`observations.ts`](../src/routes/observations.ts) for the exact shape; highlights:
-  - `metadata`: `observerName` (2–32 chars), `date` (`YYYY-MM-DD`, strict — a real calendar date, `2024-01-01`..tomorrow), `startTime`/`endTime` (`HH:MM`, `endTime > startTime`), `aviary`, `patient`, `mode` (`"live" | "vod"`). The combination `date` + `startTime` must not be in the future.
-  - `observations`: object keyed by `HH:MM` → a **flat** per-slot object (`behavior`, `location`, `notes`, and optional `object`/`animal` + `objectInteractionType`/`animalInteractionType` (+`*Other`), `description`). The server wraps each slot into the DB's one-element subject array via `transformObservations()` (a Phase-4 seam — see roadmap).
+  - `metadata`: `observerName` (2–32 chars), `date` (`YYYY-MM-DD`, strict — a real calendar date, `2024-01-01`..tomorrow), `startTime`/`endTime` (`HH:MM`, `endTime > startTime`), `aviary` (display name **or** slug — the server resolves either to the display name for storage/rendering; an *unknown* value passes through as sent, warn-only), `patient` (1–255 chars, **optional** since Phase 2 stage 2A; still required when any slot uses the flat shape), `mode` (`"live" | "vod"`). The combination `date` + `startTime` must not be in the future.
+  - `observations`: object keyed by `HH:MM` → per slot, **either** a non-empty array of per-subject objects (`subjectType` (`foster_parent|baby|juvenile`), `subjectId` (the subject name), plus the field set below) **or** the legacy flat single-subject object (`behavior`, `location`, `notes`, and optional `object`/`animal` + `objectInteractionType`/`animalInteractionType` (+`*Other`), `description`). Flat slots are wrapped server-side via `normalizeTimeSlots()` using `metadata.patient`; the flat branch is removed in Phase 2 stage 2D. Subject-residency and aviary mismatches are **warn-only** (P2-D5) — a submission is never rejected for them.
   - `submittedAt`: ISO 8601 datetime. `emails`: up to 10 addresses.
 - **Responses:** `201 { success: true, submissionId, message, emailsSent }` · `400 VALIDATION_ERROR` (with `details: [{ field, message }]`) · `500 DATABASE_ERROR`.
 
@@ -50,7 +50,7 @@ observation per hour** (in-memory; see [Rate limiting](#rate-limiting)).
 Download the stored observation as an Excel file.
 
 - **Responses:** `200` binary `.xlsx` (`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `Content-Disposition: attachment; filename="ethogram_<date>_<observer>.xlsx"`) · `404 NOT_FOUND` · `500 SERVER_ERROR`.
-- The workbook is a single `Ethogram Data` worksheet (behaviors as rows × 5-minute time slots as columns) — see [`excel.ts`](../src/services/excel.ts).
+- The workbook has **one worksheet per subject**, in chronological slot order. Sheet names are the subject name sanitized to Excel's rules and truncated to 28 chars (headroom for a numeric dedupe suffix within the 31-char limit); the full name lives in the sheet's `Subject(s):` header. Each sheet is the same behaviors-as-rows × 5-minute-time-slots-as-columns matrix — see [`excel.ts`](../src/services/excel.ts). Rows = the aviary's enabled behaviors plus any behavior present in the data.
 
 ## Error codes
 
@@ -73,4 +73,4 @@ some have example SQL in [`database-schema.md`](database-schema.md).
 - **Dashboard/analytics:** behavior frequency, location heatmap, time-of-day patterns, enrichment engagement, aggression rate, foster-parent presence, leaderboard.
 - **Authentication:** users table + `user_id` FK (the column exists but is always null today), tokens/roles.
 - **Idempotency keys**, IP-based rate limiting, and `X-RateLimit-*` / `Retry-After` headers.
-- **Multi-subject:** remove `transformObservations()` once the frontend sends the array shape directly (the DB is already array-shaped) — see [`multi-subject-data-design.md`](../../ethogram-notes/00-REFERENCE/multi-subject-data-design.md).
+- **Multi-subject (in progress — Phase 2):** the array slot shape is accepted since stage 2A; the flat branch and `metadata.patient` are removed at stage 2D — see [`config-as-data-phase2-design.md`](../../ethogram-notes/01-ACTIVE/config-as-data-phase2-design.md).
