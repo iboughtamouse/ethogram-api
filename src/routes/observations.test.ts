@@ -879,6 +879,28 @@ describe('GET /api/observations/:id/excel', () => {
     );
   });
 
+  it('resolves an unstamped row to config version 1 for Excel generation', async () => {
+    // insertTestObservation writes no config_version_id — the NULL → MIN(id)
+    // fallback must supply version 1's document to the generator.
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${id}/excel`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockGenerateExcelBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          behaviors: expect.arrayContaining([
+            expect.objectContaining({ value: 'eating', excelRowOrder: 1 }),
+          ]),
+        }),
+      })
+    );
+  });
+
   it('returns 404 for non-existent observation', async () => {
     const fakeId = '00000000-0000-0000-0000-000000000000';
 
