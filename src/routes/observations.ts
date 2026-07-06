@@ -196,6 +196,10 @@ interface ObservationMetadata {
   mode: 'live' | 'vod';
 }
 
+// Shape of a Postgres uuid column value — anything else can't match a row
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Fetch an observation by ID and reconstruct its metadata.
  * Returns null if not found.
@@ -204,6 +208,13 @@ async function fetchObservationById(id: string): Promise<{
   row: ObservationRow;
   metadata: ObservationMetadata;
 } | null> {
+  // A non-UUID id cannot match any row; querying it would make Postgres
+  // raise 22P02 and turn a plain not-found into a 500 (same class of bug
+  // the config route's int4 guard fixed — followups FU-1)
+  if (!UUID_PATTERN.test(id)) {
+    return null;
+  }
+
   const result = await query<ObservationRow>(
     `SELECT id, observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at, config_version_id
      FROM observations WHERE id = $1`,

@@ -1123,6 +1123,17 @@ describe('POST /api/observations/:id/share', () => {
     expect(body.error.code).toBe('NOT_FOUND');
   });
 
+  it('returns 404 (not 500) for a malformed observation id', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/not-a-uuid/share',
+      payload: { emails: ['user@example.com'] },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('NOT_FOUND');
+  });
+
   it('returns 400 for invalid email', async () => {
     const id = await insertTestObservation();
 
@@ -1282,6 +1293,16 @@ describe('GET /api/observations/:id/excel', () => {
     const body = response.json();
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns 404 (not 500) for a malformed observation id', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/observations/not-a-uuid/excel',
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('NOT_FOUND');
   });
 
   it('returns 500 when Excel generation fails', async () => {
