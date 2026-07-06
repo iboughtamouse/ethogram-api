@@ -703,10 +703,229 @@ describe('POST /api/observations/submit', () => {
     });
 
     expect(response.statusCode).toBe(201);
-    
+
     const body = response.json();
     expect(body.emailsSent).toBe(0); // No emails sent when Excel fails
     expect(mockSendObservationEmail).not.toHaveBeenCalled();
+  });
+
+  describe('array-native slots (Phase 2 stage 2A)', () => {
+    // Array-native request: no metadata.patient, aviary sent as the slug
+    const validArrayBody = () => ({
+      observation: {
+        metadata: {
+          observerName: 'TestObserver',
+          date: '2025-11-29',
+          startTime: '14:00',
+          endTime: '14:30',
+          aviary: 'sayyidas-cove',
+          mode: 'live' as const,
+        },
+        observations: {
+          '14:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              location: '12',
+              notes: 'Alert on perch',
+            },
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'Juvenile 1',
+              behavior: 'flying',
+              location: '',
+              notes: '',
+            },
+          ],
+          '14:05': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'flying',
+              location: '',
+              notes: '',
+            },
+          ],
+        },
+        submittedAt: '2025-11-29T20:00:00.000Z',
+      },
+      emails: ['test@example.com'],
+    });
+
+    it('accepts array slots without metadata.patient and resolves the aviary slug', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ aviary: string; aviary_id: string | null }>(
+        'SELECT aviary, aviary_id FROM observations'
+      );
+      const row = result.rows[0]!;
+      // The varchar column receives the display name, not the slug
+      expect(row.aviary).toBe("Sayyida's Cove");
+      expect(row.aviary_id).not.toBeNull();
+    });
+
+    it('stores array slots as sent, preserving every subject', async () => {
+      await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      const result = await query<{ time_slots: Record<string, unknown[]> }>(
+        'SELECT time_slots FROM observations'
+      );
+
+      const slot = result.rows[0]!.time_slots['14:00']!;
+      expect(slot).toHaveLength(2);
+      expect(slot[0]).toMatchObject({
+        subjectType: 'foster_parent',
+        subjectId: 'Sayyida',
+        behavior: 'resting_alert',
+        location: '12',
+      });
+      expect(slot[1]).toMatchObject({
+        subjectType: 'juvenile',
+        subjectId: 'Juvenile 1',
+        behavior: 'flying',
+      });
+    });
+
+    it('accepts mixed flat and array slots when patient is present', async () => {
+      const payload = validArrayBody();
+      (payload.observation.metadata as { patient?: string }).patient = 'Sayyida';
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = {
+        behavior: 'preening',
+        location: '3',
+        notes: '',
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ time_slots: Record<string, unknown[]> }>(
+        'SELECT time_slots FROM observations'
+      );
+      const timeSlots = result.rows[0]!.time_slots;
+      // Array slot passed through untouched
+      expect(timeSlots['14:00']).toHaveLength(2);
+      // Flat slot wrapped with the metadata patient
+      expect(timeSlots['14:10']).toHaveLength(1);
+      expect(timeSlots['14:10']![0]).toMatchObject({
+        subjectType: 'foster_parent',
+        subjectId: 'Sayyida',
+        behavior: 'preening',
+      });
+    });
+
+    it('returns 400 when flat slots are sent without metadata.patient', async () => {
+      const payload = validBody();
+      delete (payload.observation.metadata as { patient?: string }).patient;
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for an empty array slot', async () => {
+      const payload = validArrayBody();
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = [];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for an array entry without subject identity', async () => {
+      const payload = validArrayBody();
+      (payload.observation.observations as Record<string, unknown>)['14:10'] = [
+        { behavior: 'flying', location: '', notes: '' },
+      ];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('accepts subjects not resident in the aviary (warn-only, P2-D5)', async () => {
+      const payload = validArrayBody();
+      payload.observation.observations['14:05']![0]!.subjectId = 'Definitely Not Resident';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ time_slots: Record<string, unknown[]> }>(
+        'SELECT time_slots FROM observations'
+      );
+      expect(result.rows[0]!.time_slots['14:05']![0]).toMatchObject({
+        subjectId: 'Definitely Not Resident',
+      });
+    });
+
+    it('derives the email patient label from the subject list when patient is absent', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload: validArrayBody(),
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(mockSendObservationEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          patient: 'Sayyida, Juvenile 1',
+        })
+      );
+    });
+
+    it('passes an unknown aviary value through to the varchar column unchanged', async () => {
+      const payload = validArrayBody();
+      payload.observation.metadata.aviary = 'some-future-aviary';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const result = await query<{ aviary: string; aviary_id: string | null }>(
+        'SELECT aviary, aviary_id FROM observations'
+      );
+      expect(result.rows[0]!.aviary).toBe('some-future-aviary');
+      expect(result.rows[0]!.aviary_id).toBeNull();
+    });
   });
 });
 
