@@ -1,5 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { pool, query, closePool } from './index.js';
+import { behaviorRowsFor, type ExcelConfig } from '../services/excel.js';
+import { EXPECTED_BEHAVIOR_ROWS } from '../test-fixtures/config.js';
 
 /**
  * Sanity checks for the config-as-data seed (migrations 002 + 003).
@@ -145,6 +147,15 @@ describe('config seed (migrations 002 + 003)', () => {
     const vocabulary = aviaries[0]!.vocabulary as Record<string, string[]>;
     expect(vocabulary.behaviors).toHaveLength(23);
     expect(vocabulary.objects).toHaveLength(10);
+  });
+
+  it('derives Excel rows from version 1 identical to the retired hardcoded map (golden parity)', async () => {
+    const result = await query<{ config: ExcelConfig }>(
+      'SELECT config FROM config_versions ORDER BY id LIMIT 1'
+    );
+
+    const rows = behaviorRowsFor(result.rows[0]!.config, "Sayyida's Cove");
+    expect(rows).toEqual(EXPECTED_BEHAVIOR_ROWS);
   });
 
   // Note: no steady-state assertion on observations.config_version_id here —

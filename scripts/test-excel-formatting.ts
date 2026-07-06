@@ -2,6 +2,7 @@
  * Manual test to generate Excel file with formatting
  */
 import { generateExcelBuffer } from '../src/services/excel.js';
+import { TEST_CONFIG } from '../src/test-fixtures/config.js';
 import { writeFileSync } from 'fs';
 
 const testData = {
@@ -65,6 +66,7 @@ const testData = {
     ],
   },
   submittedAt: new Date().toISOString(),
+  config: TEST_CONFIG,
 };
 
 async function main() {
