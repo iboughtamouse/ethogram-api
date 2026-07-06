@@ -22,27 +22,18 @@ See `CLAUDE.md` for full structure. Key directories:
 
 ## Key Patterns
 
-### Data Transformation (Multi-Subject)
+### Wire Shape (Multi-Subject)
 
-**Important:** Database uses array structure to support future multi-subject observations, even though current frontend sends flat objects for single-subject (Sayyida).
+Since Phase 2 (stage 2D), the wire shape matches storage exactly — every time
+slot is a non-empty array of per-subject observations. There is no server-side
+wrapping/transformation and no `metadata.patient` field.
 
-**Frontend sends (current implementation):**
-```typescript
-{
-  "14:00": {
-    behavior: "resting_alert",
-    location: "12",
-    notes: "Alert"
-  }
-}
-```
-
-**Backend stores (array format for future expansion):**
+**Frontend sends (and backend stores):**
 ```typescript
 {
   "14:00": [{
-    subjectType: "foster_parent",
-    subjectId: "Sayyida",
+    subjectType: "foster_parent",  // or "juvenile" | "baby"
+    subjectId: "Sayyida",          // the subject's name
     behavior: "resting_alert",
     location: "12",
     notes: "Alert"
@@ -50,18 +41,9 @@ See `CLAUDE.md` for full structure. Key directories:
 }
 ```
 
-**Transform in `routes/observations.ts`:**
-```typescript
-// Wrap flat observation in array with subject metadata
-Object.entries(observations).reduce((acc, [time, obs]) => {
-  acc[time] = [{
-    subjectType: 'foster_parent',
-    subjectId: metadata.patient, // "Sayyida" in Phase 2
-    ...obs
-  }];
-  return acc;
-}, {});
-```
+`metadata.aviary` carries the aviary **slug** (e.g. `sayyidas-cove`); the server
+resolves it to the display name for storage/rendering. The authoritative contract
+is the Zod schema in `src/routes/observations.ts`.
 
 ### Routes
 
@@ -166,17 +148,10 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
 
 ### Excel Generation
 
-**Update behavior labels when adding/changing behaviors:**
-
-File: `src/services/excel.ts`
-
-```typescript
-const BEHAVIOR_ROW_MAPPING: Record<string, string> = {
-  eating_food_platform: 'Eating - On Food Platform',
-  eating_elsewhere: 'Eating - Elsewhere (Note Location)',
-  // ... add new behaviors here
-};
-```
+**Behavior rows are config-derived** (config-as-data, Phase 1): the workbook
+renders the rows the observation's stamped config version defines — see
+`behaviorRowsFor()` in `src/services/excel.ts`. There is no hardcoded mapping
+to edit. One worksheet per subject since Phase 2 (stage 2B).
 
 **Excel formatting (frozen panes, column widths):**
 ```typescript
@@ -254,9 +229,12 @@ if (!allowed) {
 
 ### Add a New Behavior
 
-1. **Frontend first:** Update `wbs-ethogram-form/src/constants/behaviors.js`
-2. **Backend Excel mapping:** Update `BEHAVIOR_ROW_MAPPING` in `src/services/excel.ts`
-3. **No database changes needed** — JSONB stores any behavior value
+Domain vocabulary is config-as-data — it lives in this repo's database, not in code:
+
+1. Add the catalog row + aviary enablement via SQL (admin dashboard comes in Phase 3)
+2. `npm run config:publish` to freeze a new config version
+3. Regenerate the form's bundled snapshot: `npm run config:export > ../wbs-ethogram-form/src/config/defaultConfig.json`
+4. No code changes needed — menus, validation, and both Excel generators derive from config
 
 ### Add a New Endpoint
 
@@ -306,8 +284,8 @@ See `CLAUDE.md` for full conventional commits guide. Quick reference:
 
 ## Files to Check First
 
-- `src/routes/observations.ts` — Main endpoint, data transformation
-- `src/services/excel.ts` — Excel generation, BEHAVIOR_ROW_MAPPING
+- `src/routes/observations.ts` — Main endpoint (Zod contract, config stamping)
+- `src/services/excel.ts` — Excel generation (config-derived rows, per-subject sheets)
 - `src/services/email.ts` — Email delivery
 - `src/db/index.ts` — Database query helper
 - `docs/database-schema.md` — JSONB structure, constraints

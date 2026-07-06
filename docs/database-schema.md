@@ -489,129 +489,21 @@ SELECT
 FROM observations;
 ```
 
-### Phase 2 Frontend-Backend Data Transformation
+### Wire Shape vs Storage Shape (historical)
 
-**Decision:** Database uses array structure `{"12:00": [{...}]}` even though Phase 2 frontend sends flat objects `{"12:00": {...}}`.
+**Decision:** the database has stored array-shaped time slots (`{"12:00": [{...}]}`)
+since day one, even while the original frontend sent flat single-subject objects.
+The API wrapped flat slots into one-element arrays (`transformObservations()`),
+attributing them to `metadata.patient`.
 
-**Context:**
-
-- **Phase 2 (Current):** Frontend only supports single-subject observations (Sayyida). Data is sent as flat objects per time slot:
-
-  ```javascript
-  {
-    "12:00": {
-      behavior: "resting_alert",
-      location: "12",
-      notes: "Alert, watching stream"
-    }
-  }
-  ```
-
-- **Phase 4 (Future):** Frontend will support multi-subject observations (foster parent + babies). Data will be sent as arrays:
-  ```javascript
-  {
-    "12:00": [
-      {
-        subjectType: "foster_parent",
-        subjectId: "Sayyida",
-        behavior: "resting_alert",
-        location: "12"
-      },
-      {
-        subjectType: "baby",
-        subjectId: "Baby",
-        behavior: "eating_elsewhere",
-        location: "BB1"
-      }
-    ]
-  }
-  ```
-
-**Why Use Array Structure Now?**
-
-- ✅ **No schema migration needed** - Phase 4 just adds more array elements
-- ✅ **Future-proof** - Database ready for multi-subject from day 1
-- ✅ **Clean separation** - Backend owns data shape, frontend adapts
-- ✅ **Simpler queries** - All queries work the same for Phase 2 and Phase 4
-
-**Transformation Strategy:**
-
-**Phase 2 (MVP - Single Subject):**
-
-- Frontend sends flat observation objects (no code changes required)
-- Backend API wraps each observation in array before storing:
-
-  ```javascript
-  // API receives from frontend:
-  { "12:00": { behavior: "resting_alert", location: "12" } }
-
-  // API transforms before storing:
-  {
-    "12:00": [{
-      subjectType: "foster_parent",
-      subjectId: "Sayyida",  // Hardcoded for Phase 2
-      behavior: "resting_alert",
-      location: "12"
-    }]
-  }
-  ```
-
-- Backend API unwraps array when returning data to frontend:
-
-  ```javascript
-  // Database stores:
-  { "12:00": [{ subjectType: "foster_parent", ... }] }
-
-  // API returns to frontend:
-  { "12:00": { behavior: "resting_alert", location: "12" } }
-  ```
-
-**Phase 4 (Multi-Subject):**
-
-- Frontend updated to send array structure directly
-- Backend removes transformation layer
-- No database migration required
-
-**Frontend Changes Needed (Phase 4):**
-
-1. **Update `formStateManager.js`:**
-   - Change `createEmptyObservation()` to return object with `subjectType`, `subjectId`
-   - Update `observations` state structure to support arrays per time slot
-
-2. **Update UI components:**
-   - Support multiple subject observations per time slot
-   - Add subject selector UI (foster parent vs babies)
-   - Handle dynamic subject addition/removal
-
-3. **Update validation:**
-   - Validate each subject in array independently
-   - Ensure at least one subject per time slot
-
-4. **Update Excel export:**
-   - One row per subject per time slot (instead of one row per time slot)
-
-**Migration Path:**
-
-```
-Phase 2: Frontend (flat) → API (transform) → Database (array)
-Phase 3: (No changes, add auth)
-Phase 4: Frontend (array) → API (passthrough) → Database (array)
-```
-
-**Why We Deferred Frontend Changes:**
-
-- ❌ **Breaking change** - Would require rewriting state management, validation, UI
-- ❌ **No current need** - Phase 2 only has one subject (Sayyida)
-- ❌ **Testing burden** - Comprehensive test suite would need updates
-- ✅ **Backend ready** - Database schema already supports multi-subject
-- ✅ **Clean cutover** - Phase 4 frontend changes are isolated, low risk
-
-**Tradeoff:**
-
-- ❌ Backend transformation adds complexity (wrapping/unwrapping)
-- ❌ Two different data shapes during transition period
-
-**Why we chose it:** Minimize Phase 2 risk, defer complexity until needed.
+**Resolution (Phase 2, 2026-07-06):** the frontend went array-native (stage 2C) and
+the flat wire shape plus the wrapping transform were **removed** (stage 2D). The wire
+shape now matches storage exactly: every slot is a non-empty array of per-subject
+observations (`subjectType`, `subjectId`, plus the field set) — see
+[`api-specification.md`](api-specification.md) for the current contract. Historical
+rows are indistinguishable from new ones: the trigger `validate_time_slots` has always
+enforced the array shape, so no data migration was ever needed — exactly the payoff the
+original decision was betting on.
 
 ---
 

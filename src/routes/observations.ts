@@ -351,14 +351,14 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       const configVersionId = versionResult.rows[0]?.id ?? null;
       const configDoc = versionResult.rows[0]?.config ?? null;
 
-      // The client may send the display name (legacy) or the slug (P2-D4);
-      // the aviary varchar column keeps receiving the display name so Excel
+      // The client sends the aviary slug (P2-D4; slug-only since 2D); the
+      // aviary varchar column keeps receiving the display name so Excel
       // headers and existing rows stay uniform. Unknown values pass through.
       const aviaryRow = await resolveAviary(metadata.aviary);
       const aviaryId = aviaryRow?.id ?? null;
       const aviaryName = aviaryRow?.name ?? metadata.aviary;
       if (!aviaryId) {
-        fastify.log.warn({ aviary: metadata.aviary }, 'Unknown aviary name; aviary_id left NULL');
+        fastify.log.warn({ aviary: metadata.aviary }, 'Unknown aviary slug; aviary_id left NULL');
       }
 
       // Warn-only subject residency check (P2-D5): a client on a stale

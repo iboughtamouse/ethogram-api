@@ -823,8 +823,10 @@ describe('POST /api/observations/submit', () => {
     });
 
     it('returns 400 for a legacy flat (single-subject object) slot', async () => {
-      // The flat wire shape died in stage 2D
+      // The flat wire shape died in stage 2D. patient is included so this
+      // test also fails if the 2A union + patient-wrap ever came back.
       const payload = validArrayBody();
+      (payload.observation.metadata as { patient?: string }).patient = 'Sayyida';
       (payload.observation.observations as Record<string, unknown>)['14:10'] = {
         behavior: 'preening',
         location: '3',
@@ -927,7 +929,10 @@ describe('POST /api/observations/submit', () => {
 
     it('ignores a stray metadata.patient key (removed in stage 2D)', async () => {
       const payload = validBody();
-      (payload.observation.metadata as { patient?: string }).patient = 'Sayyida';
+      // Deliberately DIFFERENT from the cards' subjectId — proves the value
+      // is stripped, not consumed for labels or storage
+      (payload.observation.metadata as { patient?: string }).patient =
+        'Someone Else';
 
       const response = await app.inject({
         method: 'POST',
@@ -937,6 +942,39 @@ describe('POST /api/observations/submit', () => {
 
       // Unknown keys are stripped by the schema, not rejected
       expect(response.statusCode).toBe(201);
+      // The email label derives from the cards, never the stray key
+      expect(mockSendObservationEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ patient: 'Sayyida' })
+      );
+    });
+
+    it('returns 400 for an empty subjectId', async () => {
+      const payload = validBody();
+      (payload.observation.observations['14:00']![0] as { subjectId: string }).subjectId = '';
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 for a subjectId exceeding 255 characters', async () => {
+      const payload = validBody();
+      (payload.observation.observations['14:00']![0] as { subjectId: string }).subjectId =
+        'S'.repeat(256);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/observations/submit',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('VALIDATION_ERROR');
     });
 
     it('returns 400 when observations has no time slots', async () => {
