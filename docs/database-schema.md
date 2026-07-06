@@ -4,11 +4,13 @@
 **Database:** PostgreSQL
 **Purpose:** Multi-subject behavioral observation data for WBS ethogram project
 
-> **Source of truth:** the DDL is [`migrations/001_initial_schema.sql`](../migrations/001_initial_schema.sql).
-> This doc explains it; if they disagree, the migration wins. Note: the `babies_present` and
-> `environmental_notes` columns are defined but **not written by the current submit endpoint**
-> (`src/routes/observations.ts` inserts neither, so they hold their defaults) — they are
-> reserved for future multi-subject / environmental capture.
+> **Source of truth:** the DDL is [`migrations/001_initial_schema.sql`](../migrations/001_initial_schema.sql)
+> plus the later files in [`migrations/`](../migrations). This doc describes the current shape; if they
+> disagree, the migrations win. Note: the original schema defined `babies_present` and
+> `environmental_notes` columns, but they were never written by app code and were **dropped by
+> [`migrations/004_drop_dormant_columns.sql`](../migrations/004_drop_dormant_columns.sql)**
+> (Phase 2 stage 2E, P2-D6) — dormancy was verified against production before the drop.
+> Multi-subject entry now records babies as first-class subjects in `time_slots`.
 
 ---
 
@@ -77,10 +79,6 @@ CREATE TABLE observations (
   aviary VARCHAR(255) NOT NULL,
   mode VARCHAR(10) NOT NULL CHECK (mode IN ('live', 'vod')),
 
-  -- Population context (for baby season - Phase 4+)
-  babies_present INTEGER NOT NULL DEFAULT 0 CHECK (babies_present >= 0),
-  environmental_notes TEXT,
-
   -- Multi-subject observation data (JSONB structure)
   time_slots JSONB NOT NULL,
 
@@ -105,10 +103,6 @@ CREATE TABLE observations (
   CONSTRAINT valid_observer_name_length CHECK (
     length(observer_name) BETWEEN 2 AND 32
   ),
-  CONSTRAINT valid_environmental_notes_length CHECK (
-    environmental_notes IS NULL
-    OR length(environmental_notes) <= 5000
-  ),
   CONSTRAINT valid_emails CHECK (
     emails IS NULL
     OR (array_length(emails, 1) BETWEEN 1 AND 10)
@@ -131,8 +125,6 @@ COMMENT ON TABLE observations IS 'Behavioral observations of birds in aviaries, 
 | `end_time`            | TIME         | No       | Observation session end time (24-hour format)                                 |
 | `aviary`              | VARCHAR(255) | No       | Aviary name (e.g., "Sayyida's Cove")                                          |
 | `mode`                | VARCHAR(10)  | No       | Observation mode: `live` or `vod`                                             |
-| `babies_present`      | INTEGER      | No       | Total number of babies in aviary (0 if none)                                  |
-| `environmental_notes` | TEXT         | Yes      | Freeform notes about context (weather, events, triggers), max 5000 characters |
 | `time_slots`          | JSONB        | No       | Multi-subject observation data (see structure below)                          |
 | `emails`              | TEXT[]       | Yes      | Array of email addresses for Excel delivery (1-10)                            |
 | `submitted_at`        | TIMESTAMPTZ  | No       | When observation was submitted to backend (UTC)                               |
@@ -266,11 +258,6 @@ CREATE INDEX idx_observations_aviary_date
 CREATE INDEX idx_observations_observer_date
   ON observations (observer_name, observation_date DESC);
 
--- Baby population queries (only index when babies present)
-CREATE INDEX idx_observations_babies_present
-  ON observations (babies_present)
-  WHERE babies_present > 0;
-
 -- User submissions (only index when authenticated)
 CREATE INDEX idx_observations_user
   ON observations (user_id)
@@ -295,7 +282,6 @@ CREATE INDEX idx_observations_time_slots_gin
 | `idx_observations_date_desc`      | Fast date range queries     | `WHERE observation_date BETWEEN ... ORDER BY observation_date DESC` |
 | `idx_observations_aviary_date`    | Aviary-specific dashboards  | `WHERE aviary = 'X' AND observation_date BETWEEN ...`               |
 | `idx_observations_observer_date`  | Observer history            | `WHERE observer_name = 'X' ORDER BY observation_date DESC`          |
-| `idx_observations_babies_present` | Population density analysis | `WHERE babies_present > 0`                                          |
 | `idx_observations_time_slots_gin` | JSONB containment queries   | `WHERE time_slots @> '...'`                                         |
 
 **Performance notes:**
@@ -322,9 +308,6 @@ CHECK (
   observation_date >= '2024-01-01'
   AND observation_date <= CURRENT_DATE + INTERVAL '1 day'
 )
-
--- Number of babies cannot be negative
-CHECK (babies_present >= 0)
 
 -- Email count must be 1-10 (or NULL for download-only submissions)
 CHECK (
@@ -518,8 +501,7 @@ SELECT
   observation_date,
   start_time,
   end_time,
-  aviary,
-  babies_present
+  aviary
 FROM observations
 WHERE aviary = 'Sayyida''s Cove'
   AND observation_date BETWEEN '2025-11-01' AND '2025-11-30'
@@ -560,42 +542,13 @@ GROUP BY subject->>'location'
 ORDER BY count DESC;
 ```
 
-### 4. Aggression Rate by Population Density
-
-```sql
-WITH aggression_slots AS (
-  SELECT
-    o.babies_present,
-    COUNT(*) AS total_slots,
-    COUNT(*) FILTER (
-      WHERE subject->>'behavior' LIKE '%aggression%'
-         OR subject->>'behavior' LIKE '%conflict%'
-    ) AS aggression_events
-  FROM observations o,
-    jsonb_each(o.time_slots) AS ts(time_key, subjects),
-    jsonb_array_elements(subjects) AS subject
-  WHERE o.aviary = 'Sayyida''s Cove'
-    AND o.babies_present > 0
-    AND subject->>'subjectType' = 'baby'
-  GROUP BY o.babies_present
-)
-SELECT
-  babies_present,
-  total_slots,
-  aggression_events,
-  ROUND(100.0 * aggression_events / NULLIF(total_slots, 0), 2) AS aggression_rate
-FROM aggression_slots
-ORDER BY babies_present;
-```
-
-### 5. Observations with Foster Parent Present
+### 4. Observations with Foster Parent Present
 
 ```sql
 SELECT
   id,
   observer_name,
-  observation_date,
-  babies_present
+  observation_date
 FROM observations
 WHERE aviary = 'Sayyida''s Cove'
   AND EXISTS (
@@ -606,7 +559,7 @@ WHERE aviary = 'Sayyida''s Cove'
 ORDER BY observation_date DESC;
 ```
 
-### 6. Enrichment Engagement Frequency
+### 5. Enrichment Engagement Frequency
 
 ```sql
 SELECT
@@ -624,7 +577,7 @@ GROUP BY subject->>'object'
 ORDER BY interactions DESC;
 ```
 
-### 7. Leaderboard (Authenticated Users Only)
+### 6. Leaderboard (Authenticated Users Only)
 
 ```sql
 SELECT
@@ -656,8 +609,6 @@ LIMIT 10;
   "end_time": "15:30",
   "aviary": "Sayyida's Cove",
   "mode": "live",
-  "babies_present": 0,
-  "environmental_notes": null,
   "time_slots": {
     "15:00": [
       {
@@ -701,7 +652,7 @@ LIMIT 10;
 
 ### Phase 4 Example (Sayyida + 2 Babies)
 
-**Note on Baby Identifiers:** All babies use generic `subjectId: "Baby"` because observers cannot reliably distinguish individual babies across time slots within a session. Using distinct identifiers (Baby1, Baby2) would imply tracking capability that doesn't exist, leading to inconsistent or misleading data. The `babies_present` count captures the total number without requiring individual identification.
+**Note on Baby Identifiers:** Since Phase 2 multi-subject entry, babies are recorded as first-class subjects in `time_slots` with real `subjectId` values (their subject names) — there is no separate count column.
 
 ```json
 {
@@ -712,8 +663,6 @@ LIMIT 10;
   "end_time": "10:10",
   "aviary": "Sayyida's Cove",
   "mode": "live",
-  "babies_present": 2,
-  "environmental_notes": "First day babies out of nest box, sunny weather",
   "time_slots": {
     "10:00": [
       {
@@ -1009,7 +958,6 @@ User submits future date (2030-01-01):
 ⚠️ **JSONB validation is complex** - Trigger needed for strict validation
 ⚠️ **Unnesting arrays is verbose** - Queries need multiple joins/unnests
 ⚠️ **No schema enforcement** - JSONB structure can drift (mitigated by trigger)
-⚠️ **Individual baby tracking limited** - Babies not individually identified (by design)
 
 ---
 
