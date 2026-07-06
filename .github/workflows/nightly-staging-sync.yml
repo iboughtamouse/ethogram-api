@@ -1,0 +1,96 @@
+name: Nightly Staging Sync
+
+on:
+  schedule:
+    # Runs at 2 AM UTC every day
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allows manual triggering from Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push commits to staging branch
+      issues: write # Required to create issues on merge conflicts
+
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into staging
+        id: merge
+        run: |
+          git fetch origin main
+          git merge origin/main --no-edit
+        continue-on-error: true
+
+      - name: Check for changes
+        id: check_changes
+        if: steps.merge.outcome == 'success'
+        run: |
+          if [ -n "$(git log origin/staging..HEAD)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No new commits to push - staging already up to date"
+          fi
+
+      - name: Push changes to staging
+        if: steps.merge.outcome == 'success' && steps.check_changes.outputs.has_changes == 'true'
+        run: git push origin staging
+
+      - name: Close resolved conflict issues
+        if: steps.merge.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'staging-sync-conflict'
+            });
+            for (const issue of issues) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: '✅ Conflict resolved. The nightly sync completed successfully.'
+              });
+            }
+
+      - name: Create issue on merge conflict
+        if: steps.merge.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'staging-sync-conflict'
+            });
+            if (issues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 Nightly staging sync failed - merge conflict',
+                body: `The nightly sync from \`main\` to \`staging\` hit a merge conflict.\n\nResolve: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/staging...main\n\n\`\`\`bash\ngit checkout staging && git pull origin staging\ngit merge origin/main   # resolve conflicts\ngit commit && git push origin staging\n\`\`\`\n\nThen close this issue.`,
+                labels: ['automation', 'staging-sync-conflict', 'needs-attention']
+              });
+            }
