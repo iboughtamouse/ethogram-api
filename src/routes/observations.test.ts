@@ -207,6 +207,20 @@ describe('POST /api/observations/submit', () => {
     expect(response.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it('returns 400 for notes exceeding the max length', async () => {
+    const payload = validBody();
+    payload.observation.observations['14:00'].notes = 'x'.repeat(1001);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('returns 400 for invalid date format', async () => {
     const payload = validBody();
     payload.observation.metadata.date = '2025-13-99'; // Invalid month and day

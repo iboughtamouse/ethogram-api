@@ -68,20 +68,26 @@ const timeSchema = z.string()
     return h >= 0 && h <= 23 && m >= 0 && m <= 59;
   }, { message: 'Invalid time: hours must be 00-23, minutes must be 00-59' });
 
+// Max lengths for free-text fields. Mirrors wbs-ethogram-form/src/constants/ui.js
+// (study feedback #3 — fields were uncapped; a user once submitted the Bee Movie script).
+const MAX_NOTES = 1000;
+const MAX_DESCRIPTION = 1000;
+const MAX_OTHER = 100;
+
 // Schema for a single observation (flat structure from frontend)
 const observationSchema = z.object({
   behavior: z.string(),
   location: z.string(),
-  notes: z.string(),
+  notes: z.string().max(MAX_NOTES),
   object: z.string().optional().default(''),
-  objectOther: z.string().optional().default(''),
+  objectOther: z.string().max(MAX_OTHER).optional().default(''),
   objectInteractionType: z.string().optional().default(''),
-  objectInteractionTypeOther: z.string().optional().default(''),
+  objectInteractionTypeOther: z.string().max(MAX_OTHER).optional().default(''),
   animal: z.string().optional().default(''),
-  animalOther: z.string().optional().default(''),
+  animalOther: z.string().max(MAX_OTHER).optional().default(''),
   animalInteractionType: z.string().optional().default(''),
-  animalInteractionTypeOther: z.string().optional().default(''),
-  description: z.string().optional().default(''),
+  animalInteractionTypeOther: z.string().max(MAX_OTHER).optional().default(''),
+  description: z.string().max(MAX_DESCRIPTION).optional().default(''),
 });
 
 // Schema for the full request body
