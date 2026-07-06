@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import type { QueryResult, QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 import { generateExcelBuffer, type ExcelConfig } from '../services/excel.js';
@@ -90,6 +91,24 @@ const observationSchema = z.object({
   description: z.string().max(MAX_DESCRIPTION).optional().default(''),
 });
 
+// Per-subject observation: the flat field set plus subject identity.
+// subjectId carries the subject name (P2-D7) — the same string subjects.name
+// holds and every historical JSONB row already uses; max mirrors that column.
+const subjectObservationSchema = observationSchema.extend({
+  subjectType: z.enum(['foster_parent', 'baby', 'juvenile']),
+  subjectId: z.string().min(1).max(255),
+});
+
+// A time slot is either the array-native shape (one entry per recorded
+// subject) or the legacy flat single-subject object. Both are accepted during
+// the Phase 2 transition; the flat branch is removed in stage 2D.
+// max(20) is a generous bound on concurrently recorded subjects — it keeps
+// the derived email label and warn-log payloads bounded.
+const slotSchema = z.union([
+  z.array(subjectObservationSchema).min(1).max(20),
+  observationSchema,
+]);
+
 // Schema for the full request body
 const submitObservationSchema = z.object({
   observation: z.object({
@@ -103,8 +122,14 @@ const submitObservationSchema = z.object({
         ),
       startTime: timeSchema,
       endTime: timeSchema,
+      // Display name or slug — the server resolves either to the aviary
+      // entity; the array-native client sends the slug (P2-D4)
       aviary: z.string(),
-      patient: z.string(),
+      // Optional since Phase 2 stage 2A; still required alongside flat slots
+      // (see the superRefine below) and gone entirely in stage 2D.
+      // Bounds mirror subjectId: a flat slot is wrapped with this value as
+      // its subjectId, so it must satisfy the same 1..255 invariant.
+      patient: z.string().min(1).max(255).optional(),
       mode: z.enum(['live', 'vod']),
     }).refine(
       (data) => data.endTime > data.startTime,
@@ -119,29 +144,28 @@ const submitObservationSchema = z.object({
       },
       { message: 'Observation cannot be in the future', path: ['date'] }
     ),
-    observations: z.record(z.string(), observationSchema),
+    observations: z.record(z.string(), slotSchema).refine(
+      (slots) => Object.keys(slots).length > 0,
+      { message: 'At least one time slot is required' }
+    ),
     submittedAt: z.string().datetime(),
+  }).superRefine((obs, ctx) => {
+    // A flat slot has no subject identity of its own — it can only be
+    // normalized using metadata.patient, so the two must arrive together.
+    const hasFlatSlot = Object.values(obs.observations).some((slot) => !Array.isArray(slot));
+    if (hasFlatSlot && obs.metadata.patient === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'metadata.patient is required when observations use the flat (single-subject) shape',
+        path: ['metadata', 'patient'],
+      });
+    }
   }),
   emails: z.array(z.string().email()).max(10).optional(),
 });
 
-// Type for transformed subject observation (matches database JSONB structure)
-type SubjectObservation = {
-  subjectType: 'foster_parent' | 'baby' | 'juvenile';
-  subjectId: string;
-  behavior: string;
-  location: string;
-  notes: string;
-  object: string;
-  objectOther: string;
-  objectInteractionType: string;
-  objectInteractionTypeOther: string;
-  animal: string;
-  animalOther: string;
-  animalInteractionType: string;
-  animalInteractionTypeOther: string;
-  description: string;
-};
+// Type for a subject observation (matches database JSONB structure)
+type SubjectObservation = z.infer<typeof subjectObservationSchema>;
 
 // Type for observation row from database
 interface ObservationRow {
@@ -188,11 +212,14 @@ async function fetchObservationById(id: string): Promise<{
 
   const row = result.rows[0]!;
 
-  // Extract patient from first time slot's first observation.
-  // Falls back to 'Unknown' if no time slots exist or first slot is empty.
-  const firstSlot = Object.values(row.time_slots)[0];
-  const firstObs = Array.isArray(firstSlot) ? firstSlot[0] : null;
-  const patient = firstObs?.subjectId ?? 'Unknown';
+  // Derive the patient label from the row's subjects — unique subjectIds in
+  // slot order, the same rule the submit path applies (jsonb sorts the
+  // fixed-width HH:MM keys, so slot order is chronological). Falls back to
+  // 'Unknown' for a row with no time slots.
+  const subjectNames = [
+    ...new Set(Object.values(row.time_slots).flat().map((s) => s.subjectId)),
+  ];
+  const patient = subjectNames.join(', ') || 'Unknown';
 
   // PostgreSQL returns Date objects for date columns, convert to YYYY-MM-DD string
   const dateStr = row.observation_date instanceof Date
@@ -211,6 +238,64 @@ async function fetchObservationById(id: string): Promise<{
   };
 
   return { row, metadata };
+}
+
+/**
+ * Minimal queryable the resolution helpers run against — the shared pool
+ * helper by default, a transaction-scoped client in tests.
+ */
+type Db = {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>;
+};
+const defaultDb: Db = { query };
+
+/**
+ * Resolve an aviary by display name or slug (P2-D4). When a value matches one
+ * aviary's name and a different aviary's slug, the display name wins — the
+ * legacy client contract predates slugs. Returns null for unknown values.
+ */
+export async function resolveAviary(
+  value: string,
+  db: Db = defaultDb
+): Promise<{ id: string; name: string } | null> {
+  const result = await db.query<{ id: string; name: string }>(
+    `SELECT id, name FROM aviaries
+     WHERE name = $1 OR slug = $1
+     ORDER BY (name = $1) DESC
+     LIMIT 1`,
+    [value]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Names in subjectNames with no residency episode covering the observation
+ * date in the given aviary. Episodes are half-open [arrived_on, departed_on):
+ * a subject is resident on its arrival date, not on its departure date.
+ * This is the P2-D5 warn-only telemetry — tightened to reject after 2C soaks.
+ */
+export async function findNonResidentSubjects(
+  aviaryId: string,
+  date: string,
+  subjectNames: string[],
+  db: Db = defaultDb
+): Promise<string[]> {
+  if (subjectNames.length === 0) {
+    return [];
+  }
+
+  const result = await db.query<{ name: string }>(
+    `SELECT name FROM subjects
+     WHERE aviary_id = $1
+       AND arrived_on <= $2
+       AND (departed_on IS NULL OR departed_on > $2)`,
+    [aviaryId, date]
+  );
+  const resident = new Set(result.rows.map((r) => r.name));
+  return subjectNames.filter((name) => !resident.has(name));
 }
 
 /**
@@ -233,38 +318,34 @@ async function fetchConfigForVersion(versionId: number | null): Promise<ExcelCon
 }
 
 /**
- * Transform flat observations from frontend to array format for database.
+ * Normalize time slots to the array-native database shape.
  *
- * Frontend sends: { "14:00": { behavior, location, ... } }
- * Database expects: { "14:00": [{ subjectType, subjectId, behavior, location, ... }] }
- * 
- * TODO: Remove this transformation when frontend sends array format (Phase 4 multi-subject)
+ * Array slots (the go-forward shape) pass through as-is. Legacy flat slots
+ * are wrapped as a one-element foster-parent array using metadata.patient —
+ * the schema requires patient whenever a flat slot is present, so mixed
+ * requests are well-defined. The flat branch is removed in stage 2D.
  */
-function transformObservations(
-  flatObservations: Record<string, z.infer<typeof observationSchema>>,
-  patient: string
+function normalizeTimeSlots(
+  slots: Record<string, z.infer<typeof slotSchema>>,
+  patient: string | undefined
 ): Record<string, SubjectObservation[]> {
   const result: Record<string, SubjectObservation[]> = {};
 
-  for (const [time, obs] of Object.entries(flatObservations)) {
-    result[time] = [
-      {
-        subjectType: 'foster_parent',
-        subjectId: patient,
-        behavior: obs.behavior,
-        location: obs.location,
-        notes: obs.notes,
-        object: obs.object,
-        objectOther: obs.objectOther,
-        objectInteractionType: obs.objectInteractionType,
-        objectInteractionTypeOther: obs.objectInteractionTypeOther,
-        animal: obs.animal,
-        animalOther: obs.animalOther,
-        animalInteractionType: obs.animalInteractionType,
-        animalInteractionTypeOther: obs.animalInteractionTypeOther,
-        description: obs.description,
-      },
-    ];
+  for (const [time, slot] of Object.entries(slots)) {
+    if (Array.isArray(slot)) {
+      result[time] = slot;
+      continue;
+    }
+
+    if (patient === undefined) {
+      // Unreachable: the schema rejects flat slots without metadata.patient
+      throw new Error(`Flat time slot ${time} without metadata.patient`);
+    }
+
+    // The Zod-parsed slot holds exactly the schema's fields (unknown keys
+    // stripped, defaults applied), so spreading cannot drift from the schema;
+    // the identity fields come last so they can never be overridden.
+    result[time] = [{ ...slot, subjectType: 'foster_parent', subjectId: patient }];
   }
 
   return result;
@@ -273,6 +354,37 @@ function transformObservations(
 export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/observations/submit
   fastify.post('/submit', async (request, reply) => {
+    // Structural pre-check on the raw body: a per-subject observation sent
+    // as a bare object (not wrapped in an array) would otherwise match the
+    // flat branch, which strips subjectType/subjectId and silently
+    // re-attributes the slot to metadata.patient. Reject it pointedly.
+    const rawSlots = (request.body as { observation?: { observations?: unknown } } | null)
+      ?.observation?.observations;
+    if (rawSlots !== null && typeof rawSlots === 'object' && !Array.isArray(rawSlots)) {
+      for (const [time, slot] of Object.entries(rawSlots as Record<string, unknown>)) {
+        if (
+          slot !== null &&
+          typeof slot === 'object' &&
+          !Array.isArray(slot) &&
+          ('subjectType' in slot || 'subjectId' in slot)
+        ) {
+          return reply.status(400).send({
+            success: false,
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'Validation failed',
+              details: [
+                {
+                  field: 'observation',
+                  message: `Time slot ${time} is a per-subject observation; send it as an array of subject observations`,
+                },
+              ],
+            },
+          });
+        }
+      }
+    }
+
     // Validate request body
     const parseResult = submitObservationSchema.safeParse(request.body);
 
@@ -296,30 +408,54 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
     const { observation, emails } = parseResult.data;
     const { metadata, submittedAt } = observation;
 
-    // Transform observations to array format
-    const timeSlots = transformObservations(observation.observations, metadata.patient);
+    // Normalize all slots to the array-native database shape
+    const timeSlots = normalizeTimeSlots(observation.observations, metadata.patient);
+
+    // Unique subject names in slot order — rendered by the email/Excel path
+    // when the array-native client omits metadata.patient
+    const subjectNames = [
+      ...new Set(Object.values(timeSlots).flat().map((s) => s.subjectId)),
+    ];
+    const patientLabel = metadata.patient ?? (subjectNames.join(', ') || 'Unknown');
 
     // Insert into database
     try {
       // Stamp the config version this row was submitted under (Phase 1 §3.1)
-      // and resolve the aviary display name to its entity. Both are best-effort:
-      // an unknown aviary is warn-logged and left NULL, never rejected — the
-      // wire contract is unchanged in Phase 1. One fetch supplies both the
-      // stamp and the email Excel below, so a publish landing mid-request
-      // can't make them diverge.
+      // and resolve the aviary to its entity. Both are best-effort: an
+      // unknown aviary is warn-logged and left NULL, never rejected. One
+      // fetch supplies both the stamp and the email Excel below, so a
+      // publish landing mid-request can't make them diverge.
       const versionResult = await query<{ id: number; config: ExcelConfig }>(
         'SELECT id, config FROM config_versions ORDER BY id DESC LIMIT 1'
       );
       const configVersionId = versionResult.rows[0]?.id ?? null;
       const configDoc = versionResult.rows[0]?.config ?? null;
 
-      const aviaryResult = await query<{ id: string }>(
-        'SELECT id FROM aviaries WHERE name = $1',
-        [metadata.aviary]
-      );
-      const aviaryId = aviaryResult.rows[0]?.id ?? null;
+      // The client may send the display name (legacy) or the slug (P2-D4);
+      // the aviary varchar column keeps receiving the display name so Excel
+      // headers and existing rows stay uniform. Unknown values pass through.
+      const aviaryRow = await resolveAviary(metadata.aviary);
+      const aviaryId = aviaryRow?.id ?? null;
+      const aviaryName = aviaryRow?.name ?? metadata.aviary;
       if (!aviaryId) {
         fastify.log.warn({ aviary: metadata.aviary }, 'Unknown aviary name; aviary_id left NULL');
+      }
+
+      // Warn-only subject residency check (P2-D5): a client on a stale
+      // bundled snapshot must never lose an hour of data over a subject
+      // mismatch. Tighten to reject after 2C soaks in production.
+      if (aviaryId) {
+        const unknownSubjects = await findNonResidentSubjects(
+          aviaryId,
+          metadata.date,
+          subjectNames
+        );
+        if (unknownSubjects.length > 0) {
+          fastify.log.warn(
+            { aviary: aviaryName, date: metadata.date, subjects: unknownSubjects },
+            'Subject(s) not resident in the aviary on the observation date'
+          );
+        }
       }
 
       const result = await query<{ id: string }>(
@@ -342,7 +478,7 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           metadata.date,
           metadata.startTime,
           metadata.endTime,
-          metadata.aviary,
+          aviaryName,
           metadata.mode,
           JSON.stringify(timeSlots),
           emails ?? null,
@@ -373,7 +509,7 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
             throw new Error('No published config version available');
           }
           const excelBuffer = await generateExcelBuffer({
-            metadata,
+            metadata: { ...metadata, aviary: aviaryName, patient: patientLabel },
             observations: timeSlots,
             submittedAt,
             config: configDoc,
@@ -385,7 +521,7 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
               to: [email],
               observerName: metadata.observerName,
               date: metadata.date,
-              patient: metadata.patient,
+              patient: patientLabel,
               excelBuffer,
             });
 
