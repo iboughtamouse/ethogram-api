@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { generateExcelWorkbook, generateExcelBuffer } from './excel.js';
+import { generateExcelWorkbook, generateExcelBuffer, behaviorRowsFor } from './excel.js';
+import { TEST_CONFIG } from '../test-fixtures/config.js';
 
 // Test data uses database format: observations are arrays of subject observations
 const sampleObservation = {
@@ -58,6 +59,7 @@ const sampleObservation = {
     ],
   },
   submittedAt: '2025-11-29T15:00:00.000Z',
+  config: TEST_CONFIG,
 };
 
 describe('Excel Service', () => {
@@ -363,6 +365,7 @@ describe('Excel Service', () => {
           ],
         },
         submittedAt: '2025-11-30T00:15:00.000Z',
+        config: TEST_CONFIG,
       };
 
       const workbook = await generateExcelWorkbook(midnightData);
@@ -401,6 +404,33 @@ describe('Excel Service', () => {
       expect(worksheet?.getCell('A1').value).toBe('Rehabilitation Raptor Ethogram');
       // Behavior rows should exist but have no marks
       expect(worksheet?.getCell('A5').value).toBeDefined();
+    });
+  });
+
+  describe('behaviorRowsFor', () => {
+    it('filters rows to the aviary\'s enabled behaviors, in excelRowOrder', () => {
+      const config = {
+        behaviors: [
+          { value: 'flying', excelRowLabel: 'Locomotion - Flying', excelRowOrder: 8 },
+          { value: 'eating', excelRowLabel: 'Eating (Note Location)', excelRowOrder: 1 },
+          { value: 'other', excelRowLabel: 'Other', excelRowOrder: 23 },
+        ],
+        aviaries: [
+          { name: 'Small Aviary', vocabulary: { behaviors: ['eating', 'other'] } },
+        ],
+      };
+
+      expect(behaviorRowsFor(config, 'Small Aviary')).toEqual([
+        { value: 'eating', label: 'Eating (Note Location)' },
+        { value: 'other', label: 'Other' },
+      ]);
+    });
+
+    it('falls back to the full catalog for an aviary the config does not know', () => {
+      const rows = behaviorRowsFor(TEST_CONFIG, 'Some Unknown Aviary');
+      expect(rows).toHaveLength(23);
+      expect(rows[0]).toEqual({ value: 'eating', label: 'Eating (Note Location)' });
+      expect(rows[22]).toEqual({ value: 'other', label: 'Other' });
     });
   });
 

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
-import { generateExcelBuffer } from '../services/excel.js';
+import { generateExcelBuffer, type ExcelConfig } from '../services/excel.js';
 import { sendObservationEmail } from '../services/email.js';
 import { checkRateLimit } from '../utils/rateLimit.js';
 import { sanitizeFilename } from '../utils/sanitize.js';
@@ -154,6 +154,7 @@ interface ObservationRow {
   mode: string;
   time_slots: Record<string, SubjectObservation[]>;
   submitted_at: string;
+  config_version_id: number | null;
 }
 
 // Type for reconstructed metadata (used for Excel generation and email)
@@ -176,7 +177,7 @@ async function fetchObservationById(id: string): Promise<{
   metadata: ObservationMetadata;
 } | null> {
   const result = await query<ObservationRow>(
-    `SELECT id, observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at
+    `SELECT id, observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at, config_version_id
      FROM observations WHERE id = $1`,
     [id]
   );
@@ -201,8 +202,9 @@ async function fetchObservationById(id: string): Promise<{
   const metadata: ObservationMetadata = {
     observerName: row.observer_name,
     date: dateStr,
-    startTime: row.start_time,
-    endTime: row.end_time,
+    // PostgreSQL `time` columns serialize as HH:MM:SS; Excel expects HH:MM
+    startTime: row.start_time.slice(0, 5),
+    endTime: row.end_time.slice(0, 5),
     aviary: row.aviary,
     patient,
     mode: row.mode as 'live' | 'vod',
@@ -212,8 +214,27 @@ async function fetchObservationById(id: string): Promise<{
 }
 
 /**
+ * Fetch the config document for a stamped version. Rows with a NULL stamp
+ * (pre-backfill or the stage A→B window) resolve to version 1 — safe because
+ * version 1 is a superset of every config-keyed value an old row can hold.
+ */
+async function fetchConfigForVersion(versionId: number | null): Promise<ExcelConfig> {
+  const result = await query<{ config: ExcelConfig }>(
+    `SELECT config FROM config_versions
+     WHERE id = COALESCE($1, (SELECT MIN(id) FROM config_versions))`,
+    [versionId]
+  );
+
+  const config = result.rows[0]?.config;
+  if (!config) {
+    throw new Error('No published config version available');
+  }
+  return config;
+}
+
+/**
  * Transform flat observations from frontend to array format for database.
- * 
+ *
  * Frontend sends: { "14:00": { behavior, location, ... } }
  * Database expects: { "14:00": [{ subjectType, subjectId, behavior, location, ... }] }
  * 
@@ -280,6 +301,27 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Insert into database
     try {
+      // Stamp the config version this row was submitted under (Phase 1 §3.1)
+      // and resolve the aviary display name to its entity. Both are best-effort:
+      // an unknown aviary is warn-logged and left NULL, never rejected — the
+      // wire contract is unchanged in Phase 1. One fetch supplies both the
+      // stamp and the email Excel below, so a publish landing mid-request
+      // can't make them diverge.
+      const versionResult = await query<{ id: number; config: ExcelConfig }>(
+        'SELECT id, config FROM config_versions ORDER BY id DESC LIMIT 1'
+      );
+      const configVersionId = versionResult.rows[0]?.id ?? null;
+      const configDoc = versionResult.rows[0]?.config ?? null;
+
+      const aviaryResult = await query<{ id: string }>(
+        'SELECT id FROM aviaries WHERE name = $1',
+        [metadata.aviary]
+      );
+      const aviaryId = aviaryResult.rows[0]?.id ?? null;
+      if (!aviaryId) {
+        fastify.log.warn({ aviary: metadata.aviary }, 'Unknown aviary name; aviary_id left NULL');
+      }
+
       const result = await query<{ id: string }>(
         `INSERT INTO observations (
           observer_name,
@@ -290,8 +332,10 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           mode,
           time_slots,
           emails,
-          submitted_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          submitted_at,
+          aviary_id,
+          config_version_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id`,
         [
           metadata.observerName,
@@ -303,6 +347,8 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           JSON.stringify(timeSlots),
           emails ?? null,
           submittedAt,
+          aviaryId,
+          configVersionId,
         ]
       );
 
@@ -323,10 +369,14 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
       let emailsSent = 0;
       if (emails && emails.length > 0) {
         try {
+          if (!configDoc) {
+            throw new Error('No published config version available');
+          }
           const excelBuffer = await generateExcelBuffer({
             metadata,
             observations: timeSlots,
             submittedAt,
+            config: configDoc,
           });
 
           // Send to each recipient
@@ -422,11 +472,12 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { row, metadata } = observation;
 
-      // Generate Excel once
+      // Generate Excel once, under the config version the row was stamped with
       const excelBuffer = await generateExcelBuffer({
         metadata,
         observations: row.time_slots,
         submittedAt: row.submitted_at,
+        config: await fetchConfigForVersion(row.config_version_id),
       });
 
       // Send to all recipients
@@ -502,11 +553,12 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { row, metadata } = data;
 
-      // Generate Excel
+      // Generate Excel under the config version the row was stamped with
       const excelBuffer = await generateExcelBuffer({
         metadata,
         observations: row.time_slots,
         submittedAt: row.submitted_at,
+        config: await fetchConfigForVersion(row.config_version_id),
       });
 
       // Set headers for file download

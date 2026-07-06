@@ -2,26 +2,32 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-
     "module": "nodenext",
     "target": "ES2022",
-    "lib": ["ES2022"],
-    "types": ["node"],
-
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node"
+    ],
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "resolveJsonModule": true,
-
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,
-
     "sourceMap": true,
     "declaration": true,
-
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "src/test-fixtures/**"
+  ]
 }

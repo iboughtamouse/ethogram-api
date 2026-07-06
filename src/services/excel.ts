@@ -14,41 +14,40 @@
 import ExcelJS from 'exceljs';
 
 /**
- * Maps behavior values to display labels for Excel rows
- * Includes both current and legacy behavior values for backward compatibility
+ * The slice of the published config document Excel generation needs.
+ * The full document shape is composed by compose_config() (migration 002)
+ * and served by GET /api/config.
  */
-const BEHAVIOR_ROW_MAPPING: Record<string, string> = {
-  // New consolidated behaviors
-  eating: 'Eating (Note Location)',
-  walking: 'Locomotion - Walking (Note Location)',
+export interface ExcelConfig {
+  behaviors: Array<{
+    value: string;
+    excelRowLabel: string;
+    excelRowOrder: number;
+  }>;
+  aviaries: Array<{
+    name: string;
+    vocabulary: { behaviors: string[] };
+  }>;
+}
 
-  // Legacy values (backward compatibility)
-  eating_food_platform: 'Eating - On Food Platform',
-  eating_elsewhere: 'Eating - Elsewhere (Note Location)',
-  walking_ground: 'Locomotion - Walking on Ground',
-  walking_perch: 'Locomotion - Walking on Perch (Note Location)',
-  aggression: 'Aggression or Defensive Posturing',
+/**
+ * Derives the workbook's behavior rows from the config document: the catalog
+ * ordered by excelRowOrder, filtered to the aviary's enabled behaviors so an
+ * aviary's workbook never shows rows it doesn't use. An aviary the config
+ * doesn't know (e.g. dev fixtures) gets the full catalog — a safe superset.
+ */
+export function behaviorRowsFor(
+  config: ExcelConfig,
+  aviaryName: string
+): Array<{ value: string; label: string }> {
+  const aviary = config.aviaries.find((a) => a.name === aviaryName);
+  const enabled = aviary ? new Set(aviary.vocabulary.behaviors) : null;
 
-  // Unchanged behaviors
-  flying: 'Locomotion - Flying',
-  jumping: 'Locomotion - Jumping',
-  repetitive_locomotion: 'Repetitive Locomotion (Note Location)',
-  drinking: 'Drinking',
-  bathing: 'Bathing',
-  preening: 'Preening/Grooming (Note Location)',
-  repetitive_preening: 'Repetitive Preening/Feather Damage (Note Location)',
-  nesting: 'Nesting',
-  vocalizing: 'Vocalizing (Note Location)',
-  resting_alert: 'Resting on Perch/Ground - Alert (Note Location)',
-  resting_not_alert: 'Resting on Perch/Ground - Not Alert (Note Location)',
-  resting_unknown: 'Resting on Perch/Ground - Status Unknown (Note Location)',
-  interacting_object:
-    'Interacting with Inanimate Object (Note Location, Object & Interaction)',
-  interacting_animal:
-    'Interacting with Other Animal (Note Location, Animal & Interaction)',
-  not_visible: 'Not Visible',
-  other: 'Other',
-};
+  return config.behaviors
+    .filter((b) => enabled === null || enabled.has(b.value))
+    .sort((a, b) => a.excelRowOrder - b.excelRowOrder)
+    .map((b) => ({ value: b.value, label: b.excelRowLabel }));
+}
 
 /**
  * Single subject observation within a time slot.
@@ -89,6 +88,8 @@ interface ObservationData {
   metadata: Metadata;
   observations: Record<string, SubjectObservation[]>;
   submittedAt: string;
+  /** The config document the observation was submitted under (version-stamped). */
+  config: ExcelConfig;
 }
 
 /**
@@ -195,7 +196,7 @@ function formatCellContent(observation: SubjectObservation): string {
 export async function generateExcelWorkbook(
   data: ObservationData
 ): Promise<ExcelJS.Workbook> {
-  const { metadata, observations } = data;
+  const { metadata, observations, config } = data;
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Ethogram Data');
 
@@ -256,10 +257,9 @@ export async function generateExcelWorkbook(
   });
 
   // Rows 5+: Behavior labels and observation marks
-  const behaviorRows = Object.keys(BEHAVIOR_ROW_MAPPING);
-  behaviorRows.forEach((behaviorValue, index) => {
+  const behaviorRows = behaviorRowsFor(config, metadata.aviary);
+  behaviorRows.forEach(({ value: behaviorValue, label: behaviorLabel }, index) => {
     const rowIndex = 5 + index;
-    const behaviorLabel = BEHAVIOR_ROW_MAPPING[behaviorValue];
 
     // Column A: Behavior label with text wrapping
     const labelCell = worksheet.getCell(rowIndex, 1);

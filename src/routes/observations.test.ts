@@ -138,6 +138,42 @@ describe('POST /api/observations/submit', () => {
     expect(Object.keys(row.time_slots)).toContain('14:00');
   });
 
+  it('stamps the latest config version and resolves the aviary entity', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload: validBody(),
+    });
+
+    const result = await query<{ aviary_id: string | null; config_version_id: number | null }>(
+      'SELECT aviary_id, config_version_id FROM observations'
+    );
+
+    const row = result.rows[0]!;
+    // "Sayyida's Cove" is a seeded aviary (migration 003), so it must resolve
+    expect(row.aviary_id).not.toBeNull();
+    expect(row.config_version_id).toBeGreaterThanOrEqual(1);
+  });
+
+  it('leaves aviary_id NULL for an unknown aviary name (never rejects)', async () => {
+    const payload = validBody();
+    payload.observation.metadata.aviary = 'Some Future Aviary';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/observations/submit',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+
+    const result = await query<{ aviary_id: string | null; config_version_id: number | null }>(
+      'SELECT aviary_id, config_version_id FROM observations'
+    );
+    expect(result.rows[0]!.aviary_id).toBeNull();
+    expect(result.rows[0]!.config_version_id).toBeGreaterThanOrEqual(1);
+  });
+
   it('transforms observations to array format with subject info', async () => {
     const payload = validBody();
 
@@ -822,6 +858,47 @@ describe('GET /api/observations/:id/excel', () => {
     expect(response.headers['content-disposition']).toContain('attachment');
     expect(response.headers['content-disposition']).toContain('.xlsx');
     expect(mockGenerateExcelBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes HH:MM times to Excel generation (Postgres time columns serialize as HH:MM:SS)', async () => {
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${id}/excel`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockGenerateExcelBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          startTime: '14:00',
+          endTime: '14:30',
+        }),
+      })
+    );
+  });
+
+  it('resolves an unstamped row to config version 1 for Excel generation', async () => {
+    // insertTestObservation writes no config_version_id — the NULL → MIN(id)
+    // fallback must supply version 1's document to the generator.
+    const id = await insertTestObservation();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/observations/${id}/excel`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mockGenerateExcelBuffer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          behaviors: expect.arrayContaining([
+            expect.objectContaining({ value: 'eating', excelRowOrder: 1 }),
+          ]),
+        }),
+      })
+    );
   });
 
   it('returns 404 for non-existent observation', async () => {

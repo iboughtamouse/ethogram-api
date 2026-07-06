@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import { config } from './config.js';
 import { healthRoutes } from './routes/health.js';
 import { observationsRoutes } from './routes/observations.js';
+import { configRoutes } from './routes/config.js';
 
 export async function buildApp() {
   const app = Fastify({
@@ -18,6 +19,7 @@ export async function buildApp() {
   // Routes
   await app.register(healthRoutes);
   await app.register(observationsRoutes, { prefix: '/api/observations' });
+  await app.register(configRoutes, { prefix: '/api/config' });
 
   return app;
 }
