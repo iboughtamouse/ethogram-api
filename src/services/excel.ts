@@ -195,20 +195,28 @@ function formatCellContent(observation: SubjectObservation): string {
   return parts.length > 1 ? parts.join('\n') : 'x';
 }
 
+/** Strip leading/trailing apostrophes and whitespace (Excel rejects both). */
+const stripSheetNameBoundary = (name: string): string =>
+  name.replace(/^['\s]+|['\s]+$/g, '');
+
 /**
  * Excel worksheet names must satisfy Excel's rules: no `* ? : \ / [ ]`, no
- * leading/trailing apostrophe, 1–31 chars, unique per workbook
- * (case-insensitive). Truncated to 28 chars to leave room for a dedupe
- * suffix; the untruncated subject name lives in the sheet's Subject(s) row.
+ * leading/trailing apostrophe, 1–31 chars, not the reserved name "History",
+ * unique per workbook (case-insensitive). Truncated to 28 chars to leave
+ * room for a dedupe suffix; the untruncated subject name lives in the
+ * sheet's Subject(s) header row. Boundary stripping runs AFTER truncation —
+ * the slice can re-expose a boundary apostrophe.
  */
 function sanitizeSheetName(name: string): string {
   const cleaned = name
     .replace(/[*?:\\/[\]]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^'+|'+$/g, '')
     .trim();
-  return cleaned.slice(0, 28).trim() || 'Subject';
+  const base = stripSheetNameBoundary(cleaned.slice(0, 28));
+  if (base === '') return 'Subject';
+  // ExcelJS throws on the exact (case-sensitive) reserved name
+  if (base === 'History') return 'History (Subject)';
+  return base;
 }
 
 function uniqueSheetName(subjectName: string, used: Set<string>): string {
@@ -216,10 +224,32 @@ function uniqueSheetName(subjectName: string, used: Set<string>): string {
   let candidate = base;
   for (let suffix = 2; used.has(candidate.toLowerCase()); suffix++) {
     const tag = ` ${suffix}`;
-    candidate = `${base.slice(0, 31 - tag.length).trimEnd()}${tag}`;
+    candidate = `${stripSheetNameBoundary(base.slice(0, 31 - tag.length))}${tag}`;
   }
   used.add(candidate.toLowerCase());
   return candidate;
+}
+
+/**
+ * Unique subjectIds across a row's time slots, in chronological slot order
+ * (keys are fixed-width HH:MM, so a lexicographic sort is chronological).
+ * Sorting makes the order deterministic on every path — client JSON key
+ * order and Postgres jsonb key order would otherwise disagree. Entries
+ * missing a subjectId (malformed hand-written rows) group under 'Unknown'
+ * instead of crashing the export.
+ */
+export function subjectIdsInSlotOrder(
+  observations: Record<string, SubjectObservation[]>
+): string[] {
+  return [
+    ...new Set(
+      Object.keys(observations)
+        .sort()
+        .flatMap((time) =>
+          (observations[time] ?? []).map((o) => o.subjectId ?? 'Unknown')
+        )
+    ),
+  ];
 }
 
 /**
@@ -238,9 +268,7 @@ export async function generateExcelWorkbook(
   // One row set shared by every sheet — identical matrix per bird
   const behaviorRows = behaviorRowsFor(config, metadata.aviary, observations);
 
-  const subjects = [
-    ...new Set(Object.values(observations).flat().map((o) => o.subjectId)),
-  ];
+  const subjects = subjectIdsInSlotOrder(observations);
   if (subjects.length === 0) {
     subjects.push(metadata.patient);
   }
@@ -249,7 +277,9 @@ export async function generateExcelWorkbook(
   for (const subject of subjects) {
     const subjectObservations: Record<string, SubjectObservation[]> = {};
     for (const [time, slot] of Object.entries(observations)) {
-      const matching = slot.filter((obs) => obs.subjectId === subject);
+      const matching = slot.filter(
+        (obs) => (obs.subjectId ?? 'Unknown') === subject
+      );
       if (matching.length > 0) {
         subjectObservations[time] = matching;
       }
@@ -356,14 +386,16 @@ function addSubjectWorksheet(
       if (!slotObservations) return;
 
       // Observations here are already this subject's only; the protocol
-      // records one behavior per subject per slot, so at most one matches
+      // records one behavior per subject per slot, so more than one match
+      // is protocol-violating data — render all of them rather than
+      // silently dropping any
       const matchingObs = slotObservations.filter(
         (obs) => obs.behavior === behaviorValue
       );
 
       if (matchingObs.length > 0) {
         const columnIndex = timeIndex + 2;
-        const cellContent = formatCellContent(matchingObs[0]!);
+        const cellContent = matchingObs.map(formatCellContent).join('\n—\n');
         const cell = worksheet.getCell(rowIndex, columnIndex);
         cell.value = cellContent;
         cell.alignment = { wrapText: true, vertical: 'top' };

@@ -568,6 +568,167 @@ describe('Excel Service', () => {
       );
     });
 
+    it('strips a boundary apostrophe re-exposed by truncation', async () => {
+      // The 28th character lands exactly on the possessive apostrophe
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: "Juvenile Barred Owl Sayyida's Baby",
+              behavior: 'flying',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const name = workbook.worksheets[0]!.name;
+      expect(name.endsWith("'")).toBe(false);
+      expect(name.startsWith("'")).toBe(false);
+    });
+
+    it('avoids ExcelJS\'s reserved sheet name "History"', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'History',
+              behavior: 'flying',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      expect(workbook.worksheets[0]!.name).not.toBe('History');
+      expect(workbook.worksheets[0]!.getCell('B2').value).toBe(
+        'Subject(s): History'
+      );
+    });
+
+    it('orders sheets by chronological slot order regardless of key insertion order', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          // Keys deliberately out of order — client JSON key order and
+          // Postgres jsonb key order must both produce the same workbook
+          '10:05': [
+            {
+              subjectType: 'juvenile' as const,
+              subjectId: 'Juvenile 1',
+              behavior: 'flying',
+            },
+          ],
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      expect(workbook.worksheets.map((ws) => ws.name)).toEqual([
+        'Sayyida',
+        'Juvenile 1',
+      ]);
+    });
+
+    it('renders every entry when one subject has duplicate behavior entries in a slot', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              notes: 'first entry',
+            },
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              behavior: 'resting_alert',
+              notes: 'second entry',
+            },
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const sheet = workbook.getWorksheet('Sayyida');
+      let row = 0;
+      for (let r = 5; r <= 30; r++) {
+        if (
+          sheet?.getCell(r, 1).value ===
+          'Resting on Perch/Ground - Alert (Note Location)'
+        ) {
+          row = r;
+          break;
+        }
+      }
+      expect(sheet?.getCell(row, 2).value).toContain('first entry');
+      expect(sheet?.getCell(row, 2).value).toContain('second entry');
+    });
+
+    it('groups entries missing a subjectId under Unknown instead of crashing', async () => {
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            // Malformed hand-written row: no subject identity
+            { behavior: 'flying' } as never,
+          ],
+        },
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      expect(workbook.worksheets[0]!.name).toBe('Unknown');
+    });
+
+    it('applies the enabled-union-present row filter through the workbook entry point', async () => {
+      const scopedConfig = {
+        behaviors: [
+          { value: 'eating', excelRowLabel: 'Eating (Note Location)', excelRowOrder: 1 },
+          { value: 'flying', excelRowLabel: 'Locomotion - Flying', excelRowOrder: 8 },
+          { value: 'other', excelRowLabel: 'Other', excelRowOrder: 23 },
+        ],
+        aviaries: [
+          {
+            name: "Sayyida's Cove",
+            vocabulary: { behaviors: ['eating'] },
+          },
+        ],
+      };
+      const data = {
+        ...multiSubjectObservation,
+        observations: {
+          '10:00': [
+            {
+              subjectType: 'foster_parent' as const,
+              subjectId: 'Sayyida',
+              // Present in the data but NOT enabled — must still get a row
+              behavior: 'flying',
+            },
+          ],
+        },
+        config: scopedConfig,
+      };
+
+      const workbook = await generateExcelWorkbook(data);
+      const sheet = workbook.worksheets[0]!;
+      expect(sheet.getCell('A5').value).toBe('Eating (Note Location)');
+      expect(sheet.getCell('A6').value).toBe('Locomotion - Flying');
+      // 'other' is neither enabled nor present — no row
+      expect(sheet.getCell('A7').value).toBeNull();
+    });
+
     it('sanitizes, truncates, and de-duplicates worksheet names', async () => {
       const longNameA = 'A Very Long Juvenile Subject Name Indeed [Band 1]';
       const longNameB = 'A Very Long Juvenile Subject Name Indeed [Band 2]';

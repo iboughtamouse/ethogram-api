@@ -2,7 +2,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { query } from '../db/index.js';
-import { generateExcelBuffer, type ExcelConfig } from '../services/excel.js';
+import {
+  generateExcelBuffer,
+  subjectIdsInSlotOrder,
+  type ExcelConfig,
+} from '../services/excel.js';
 import { sendObservationEmail } from '../services/email.js';
 import { checkRateLimit } from '../utils/rateLimit.js';
 import { sanitizeFilename } from '../utils/sanitize.js';
@@ -213,13 +217,9 @@ async function fetchObservationById(id: string): Promise<{
   const row = result.rows[0]!;
 
   // Derive the patient label from the row's subjects — unique subjectIds in
-  // slot order, the same rule the submit path applies (jsonb sorts the
-  // fixed-width HH:MM keys, so slot order is chronological). Falls back to
+  // slot order, the same rule the submit path applies. Falls back to
   // 'Unknown' for a row with no time slots.
-  const subjectNames = [
-    ...new Set(Object.values(row.time_slots).flat().map((s) => s.subjectId)),
-  ];
-  const patient = subjectNames.join(', ') || 'Unknown';
+  const patient = subjectIdsInSlotOrder(row.time_slots).join(', ') || 'Unknown';
 
   // PostgreSQL returns Date objects for date columns, convert to YYYY-MM-DD string
   const dateStr = row.observation_date instanceof Date
@@ -413,9 +413,7 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Unique subject names in slot order — rendered by the email/Excel path
     // when the array-native client omits metadata.patient
-    const subjectNames = [
-      ...new Set(Object.values(timeSlots).flat().map((s) => s.subjectId)),
-    ];
+    const subjectNames = subjectIdsInSlotOrder(timeSlots);
     const patientLabel = metadata.patient ?? (subjectNames.join(', ') || 'Unknown');
 
     // Insert into database
