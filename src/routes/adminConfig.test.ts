@@ -34,6 +34,12 @@ function publish(payload: Record<string, unknown> = {}) {
 /** Delete any versions this file published and any draft rows it created. */
 async function restore(): Promise<void> {
   await query(`DELETE FROM config_versions WHERE id > $1`, [baselineVersion]);
+  // Rewind the id sequence too: version numbers ARE the ids, and the
+  // end-to-end test asserts the next publish gets baselineVersion + 1 —
+  // without this, re-runs against the same DB drift the sequence forward
+  await query(`SELECT setval(pg_get_serial_sequence('config_versions', 'id'), $1)`, [
+    baselineVersion,
+  ]);
   await query(`DELETE FROM behaviors WHERE value LIKE 'ctest_%'`);
 }
 
