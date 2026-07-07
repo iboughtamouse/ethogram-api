@@ -28,11 +28,11 @@ function lastEmailedToken(): string {
   return link.split('#token=')[1]!;
 }
 
-async function requestLink(email: string, ip = '10.0.0.1') {
+async function requestLink(email: string, ip = '10.0.0.1', origin?: string) {
   return app.inject({
     method: 'POST',
     url: '/api/admin/auth/request-link',
-    headers: CSRF_HEADER,
+    headers: origin ? { ...CSRF_HEADER, origin } : CSRF_HEADER,
     payload: { email },
     remoteAddress: ip,
   });
@@ -111,6 +111,34 @@ describe('CSRF header guard', () => {
   });
 });
 
+describe('Origin allowlist', () => {
+  it('rejects any admin request whose Origin is not the admin app', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/admin/auth/request-link',
+      headers: { ...CSRF_HEADER, origin: 'https://evil.example.com' },
+      payload: { email: TEST_EMAIL },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(sendAdminLoginEmail).not.toHaveBeenCalled();
+  });
+
+  it('also rejects a mismatched Origin on GETs (before the session guard)', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/admin/me',
+      headers: { origin: 'https://evil.example.com' },
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it('allows the configured admin origin', async () => {
+    // config.adminAppUrl defaults to http://localhost:5174 under test env
+    const response = await requestLink(TEST_EMAIL, '10.0.0.1', 'http://localhost:5174');
+    expect(response.statusCode).toBe(200);
+  });
+});
+
 describe('POST /api/admin/auth/request-link', () => {
   it('returns the same 200 message for unknown emails and sends nothing', async () => {
     const response = await requestLink('nobody@example.com');
@@ -179,6 +207,19 @@ describe('POST /api/admin/auth/request-link', () => {
       payload: {},
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it('opportunistically sweeps long-expired login tokens', async () => {
+    await query(
+      `INSERT INTO admin_login_tokens (admin_user_id, token_hash, expires_at)
+       VALUES ($1, $2, NOW() - interval '2 hours')`,
+      [testUserId, hashToken(generateToken())]
+    );
+    await requestLink('nobody@example.com');
+    const stale = await query(
+      `SELECT id FROM admin_login_tokens WHERE expires_at < NOW() - interval '1 hour'`
+    );
+    expect(stale.rows).toHaveLength(0);
   });
 });
 
@@ -257,6 +298,17 @@ describe('POST /api/admin/auth/verify', () => {
     const response = await app.inject({ method: 'GET', url: '/api/admin/auth/verify' });
     expect(response.statusCode).toBe(404);
   });
+
+  it('sweeps expired sessions on successful sign-in', async () => {
+    await query(
+      `INSERT INTO admin_sessions (admin_user_id, token_hash, expires_at)
+       VALUES ($1, $2, NOW() - interval '1 day')`,
+      [testUserId, hashToken(generateToken())]
+    );
+    await signIn();
+    const expired = await query(`SELECT id FROM admin_sessions WHERE expires_at < NOW()`);
+    expect(expired.rows).toHaveLength(0);
+  });
 });
 
 describe('GET /api/admin/me', () => {
@@ -320,6 +372,23 @@ describe('GET /api/admin/me', () => {
       [hashToken(raw)]
     );
     expect(bumped.rows[0]!.slid).toBe(true);
+
+    // The browser's cookie must be re-issued too, or it would still expire
+    // 30 days after the original sign-in
+    const reissued = response.cookies.find((c) => c.name === SESSION_COOKIE);
+    expect(reissued).toBeDefined();
+    expect(reissued!.value).toBe(raw);
+  });
+
+  it('does not re-issue the cookie for a session touched within the hour', async () => {
+    const session = await signIn(); // last_seen_at = NOW()
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/admin/me',
+      cookies: { [SESSION_COOKIE]: session },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.cookies.find((c) => c.name === SESSION_COOKIE)).toBeUndefined();
   });
 });
 
@@ -337,6 +406,11 @@ describe('POST /api/admin/auth/logout', () => {
 
     const sessions = await query('SELECT id FROM admin_sessions');
     expect(sessions.rows).toHaveLength(0);
+
+    // The clearing cookie must repeat secure/sameSite or browsers won't delete it
+    const cleared = response.cookies.find((c) => c.name === SESSION_COOKIE);
+    expect(cleared).toBeDefined();
+    expect(cleared!.sameSite?.toLowerCase()).toBe('lax');
 
     const me = await app.inject({
       method: 'GET',

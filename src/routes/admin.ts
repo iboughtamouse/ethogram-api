@@ -2,9 +2,12 @@
  * Admin routes (Phase 3 stage 3A): magic-link auth + session-guarded scope.
  *
  * Design: ethogram-notes/01-ACTIVE/config-as-data-phase3-design.md §2.
- * Every non-GET request under /api/admin must carry the x-ethogram-admin
- * header (CSRF: cross-site requests can't set custom headers without passing
- * our CORS preflight, which only admits the admin origin).
+ * CSRF defense on this scope is two layers, both enforced in the onRequest
+ * hook below: (1) a browser Origin allowlist — a credentialed cross-origin
+ * request always carries an Origin header, so any request whose Origin isn't
+ * the admin app is rejected; this locks the scope to the admin origin even
+ * though the shared CORS registration allows the public form origin too;
+ * (2) a required x-ethogram-admin header on mutations.
  */
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -76,7 +79,13 @@ function setSessionCookie(reply: FastifyReply, token: string): void {
 }
 
 function clearSessionCookie(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE, { path: '/' });
+  // Clearing must repeat the secure/sameSite attributes used when setting the
+  // cookie, or browsers refuse to match and delete it (notably SameSite=None).
+  reply.clearCookie(SESSION_COOKIE, {
+    path: '/',
+    secure: config.adminCookieSecure,
+    sameSite: config.adminCookieSameSite,
+  });
 }
 
 /**
@@ -122,6 +131,10 @@ async function requireAdminSession(
        WHERE id = $1`,
       [row.session_id, SESSION_TTL_DAYS]
     );
+    // Slide the browser's copy too — the cookie's maxAge is fixed at issue, so
+    // without re-setting it the session would be evicted client-side 30 days
+    // after sign-in no matter how recently it was used.
+    setSessionCookie(reply, raw);
   }
 
   request.adminUser = {
@@ -133,8 +146,18 @@ async function requireAdminSession(
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   // CSRF guard for the whole /api/admin scope (CORS preflight OPTIONS is
-  // answered by @fastify/cors before routing, so it never reaches this hook)
+  // answered by @fastify/cors before routing, so it never reaches this hook).
   app.addHook('onRequest', async (request, reply) => {
+    // Origin allowlist: a browser attaches Origin to every credentialed
+    // cross-origin request, so rejecting a mismatched Origin locks this scope
+    // to the admin app even though the shared CORS list also admits the public
+    // form origin. A missing Origin (server-to-server, curl, tests) carries no
+    // ambient cookie, so it's allowed through.
+    const origin = request.headers.origin;
+    if (origin && origin !== config.adminAppUrl) {
+      return reply.status(403).send({ success: false, error: 'Origin not allowed' });
+    }
+
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       if (request.headers['x-ethogram-admin'] !== '1') {
         return reply
@@ -158,24 +181,30 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     const email = parsed.data.email.trim().toLowerCase();
     const ip = request.ip;
 
-    // Opportunistic cleanup keeps the events table tiny
+    // Opportunistic cleanup keeps these tables tiny (no cron needed): expired
+    // login tokens and long-past auth events. Sessions are swept at verify.
     await query(`DELETE FROM admin_auth_events WHERE created_at < NOW() - interval '24 hours'`);
+    await query(`DELETE FROM admin_login_tokens WHERE expires_at < NOW() - interval '1 hour'`);
+
+    // Insert this attempt BEFORE counting, then gate on the count including our
+    // own row. This closes the check-then-insert race: a concurrent burst all
+    // sees an at-or-over-cap count and fails closed, instead of every request
+    // reading the pre-burst count and sending a flood of emails.
+    await query(`INSERT INTO admin_auth_events (kind, email, ip) VALUES ('request_link', $1, $2)`, [
+      email,
+      ip,
+    ]);
 
     const [byEmail, byIp] = await Promise.all([
       countEvents('request_link', 'email', email),
       countEvents('request_link', 'ip', ip),
     ]);
-    if (byEmail >= REQUEST_LINK_MAX_PER_EMAIL || byIp >= REQUEST_LINK_MAX_PER_IP) {
+    if (byEmail > REQUEST_LINK_MAX_PER_EMAIL || byIp > REQUEST_LINK_MAX_PER_IP) {
       return reply.status(429).send({
         success: false,
         error: 'Too many sign-in requests. Please try again later.',
       });
     }
-
-    await query(`INSERT INTO admin_auth_events (kind, email, ip) VALUES ('request_link', $1, $2)`, [
-      email,
-      ip,
-    ]);
 
     const user = await query<{ id: string }>(
       `SELECT id FROM admin_users WHERE email = $1 AND is_active`,
@@ -249,6 +278,9 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         error: 'This account is no longer active.',
       });
     }
+
+    // Opportunistic sweep of expired sessions (login is low-frequency)
+    await query(`DELETE FROM admin_sessions WHERE expires_at < NOW()`);
 
     const sessionToken = generateToken();
     await query(

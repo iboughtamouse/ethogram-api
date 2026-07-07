@@ -20,6 +20,12 @@ CREATE TABLE admin_users (
   CONSTRAINT admin_users_email_lowercase CHECK (email = LOWER(email))
 );
 
+-- Keep updated_at fresh on write, matching the convention from 001/002
+-- (update_updated_at_column() is defined in 001_initial_schema.sql)
+CREATE TRIGGER admin_users_updated_at
+  BEFORE UPDATE ON admin_users
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- =============================================================================
 -- MAGIC-LINK TOKENS (single-use, 15-minute expiry; only the SHA-256 hash is
 -- stored — a DB leak must not yield redeemable links)
@@ -29,7 +35,10 @@ CREATE TABLE admin_login_tokens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id UUID NOT NULL REFERENCES admin_users(id),
   token_hash CHAR(64) UNIQUE NOT NULL,
-  request_ip INET,
+  -- Stored verbatim from Fastify's request.ip (a proxy-derived string); TEXT,
+  -- not INET, because that value can be a non-address token ('unknown', an
+  -- ip:port pair) that a strict INET cast would reject at write time
+  request_ip TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMPTZ NOT NULL,
   consumed_at TIMESTAMPTZ
@@ -62,7 +71,7 @@ CREATE TABLE admin_auth_events (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   kind VARCHAR(30) NOT NULL,
   email VARCHAR(255),
-  ip INET,
+  ip TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
