@@ -11,20 +11,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
+import { isoDate } from '../utils/isoDate.js';
 
 const VOCAB_KINDS = ['object', 'object_interaction', 'animal', 'animal_interaction'] as const;
-
-// Shape AND calendar validity: '2026-02-30' passes the regex but must 400,
-// not reach Postgres and 500. Date.parse alone is NOT enough — V8 rolls
-// out-of-range days over (Feb 30 → Mar 2) — so round-trip the parsed date
-// back to a string and require it to match.
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((value) => {
-    const time = Date.parse(value); // date-only ISO strings parse as UTC midnight
-    return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value;
-  });
 
 const submissionsQuerySchema = z.object({
   from: isoDate.optional(),
@@ -108,6 +97,7 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
         [found.id]
       ),
       query<{
+        id: string;
         name: string;
         species: string;
         type: string;
@@ -115,7 +105,9 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
         departedOn: string | null;
         current: boolean;
       }>(
-        `SELECT name, species, subject_type AS type,
+        // id rides along for the 3C editing UI — the subject mutation
+        // endpoints (PATCH/change-type/DELETE) address episodes by UUID
+        `SELECT id, name, species, subject_type AS type,
                 arrived_on::text AS "arrivedOn", departed_on::text AS "departedOn",
                 (arrived_on <= CURRENT_DATE
                  AND (departed_on IS NULL OR departed_on > CURRENT_DATE)) AS current
