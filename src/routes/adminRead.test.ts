@@ -178,6 +178,8 @@ describe('GET /api/admin/aviaries/:slug', () => {
     const sayyida = data.subjects.find((s: { name: string }) => s.name === 'Sayyida');
     expect(sayyida).toMatchObject({ type: 'foster_parent', current: true });
     expect(sayyida.arrivedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // The editing UI addresses episodes by UUID (PATCH/change-type/DELETE)
+    expect(sayyida.id).toMatch(/^[0-9a-f-]{36}$/);
     const juvenile = data.subjects.find((s: { name: string }) => s.name === '187(B)');
     expect(juvenile).toMatchObject({ type: 'juvenile', current: true, arrivedOn: '2026-06-01' });
 

@@ -97,6 +97,7 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
         [found.id]
       ),
       query<{
+        id: string;
         name: string;
         species: string;
         type: string;
@@ -104,7 +105,9 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
         departedOn: string | null;
         current: boolean;
       }>(
-        `SELECT name, species, subject_type AS type,
+        // id rides along for the 3C editing UI — the subject mutation
+        // endpoints (PATCH/change-type/DELETE) address episodes by UUID
+        `SELECT id, name, species, subject_type AS type,
                 arrived_on::text AS "arrivedOn", departed_on::text AS "departedOn",
                 (arrived_on <= CURRENT_DATE
                  AND (departed_on IS NULL OR departed_on > CURRENT_DATE)) AS current
