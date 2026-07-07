@@ -90,6 +90,46 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   }
 }
 
+interface AdminLoginEmailOptions {
+  to: string;
+  link: string;
+}
+
+/**
+ * Send an admin magic-link sign-in email (Phase 3 §2).
+ *
+ * The link carries the single-use token in its URL fragment; the email states
+ * the 15-minute expiry and that unsolicited links can be ignored.
+ */
+export async function sendAdminLoginEmail(
+  options: AdminLoginEmailOptions
+): Promise<SendEmailResult> {
+  const { to, link } = options;
+
+  const text = `
+Sign in to the WBS Ethogram admin dashboard:
+
+${link}
+
+This link expires in 15 minutes and can be used once. If you didn't request
+it, you can safely ignore this email — no one can sign in without it.
+`.trim();
+
+  const html = `
+<h2>WBS Ethogram admin sign-in</h2>
+<p><a href="${escapeHtml(link)}">Click here to sign in</a> (button on the page confirms it).</p>
+<p>This link expires in 15 minutes and can be used once. If you didn't request it,
+you can safely ignore this email — no one can sign in without it.</p>
+`.trim();
+
+  return sendEmail({
+    to: [to],
+    subject: 'WBS Ethogram admin sign-in link',
+    text,
+    html,
+  });
+}
+
 interface ObservationEmailOptions {
   to: string[];
   observerName: string;
