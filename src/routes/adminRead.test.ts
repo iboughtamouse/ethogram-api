@@ -10,6 +10,7 @@ const TEST_EMAIL = 'admin-read-test@example.com';
 let app: FastifyInstance;
 let testUserId: string;
 let sessionToken: string;
+let aliceObservationId: string;
 const observationIds: string[] = [];
 
 async function get(url: string) {
@@ -52,6 +53,11 @@ async function insertObservation(fields: {
 beforeAll(async () => {
   app = await buildApp();
 
+  // A killed prior run never reaches afterAll — sweep its leftovers first so
+  // the count/order/pagination assertions below can't fail for stale reasons
+  await query(`DELETE FROM observations WHERE observer_name LIKE 'ReadTest%'`);
+  await query(`DELETE FROM aviaries WHERE slug = 'empty-test-aviary'`);
+
   const user = await query<{ id: string }>(
     `INSERT INTO admin_users (email, display_name) VALUES ($1, 'Read Test Admin')
      ON CONFLICT (email) DO UPDATE SET is_active = true
@@ -59,6 +65,7 @@ beforeAll(async () => {
     [TEST_EMAIL]
   );
   testUserId = user.rows[0]!.id;
+  await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [testUserId]);
 
   sessionToken = generateToken();
   await query(
@@ -71,7 +78,7 @@ beforeAll(async () => {
     await query<{ id: string }>(`SELECT id FROM aviaries WHERE slug = 'sayyidas-cove'`)
   ).rows[0]!.id;
 
-  await insertObservation({
+  aliceObservationId = await insertObservation({
     observer: 'ReadTest Alice',
     date: '2026-03-01',
     aviaryText: 'sayyidas-cove',
@@ -129,6 +136,20 @@ describe('GET /api/admin/overview', () => {
     expect(latestVersion.publishedAt).toBeTruthy();
     // Editing tables match the latest snapshot on a freshly migrated DB
     expect(unpublishedChanges).toBe(false);
+  });
+
+  it('reports unpublished changes when the editing tables drift', async () => {
+    await query(`UPDATE behaviors SET label = label || ' (drift)' WHERE value = 'flying'`);
+    try {
+      const drifted = await get('/api/admin/overview');
+      expect(drifted.json().data.unpublishedChanges).toBe(true);
+    } finally {
+      await query(
+        `UPDATE behaviors SET label = replace(label, ' (drift)', '') WHERE value = 'flying'`
+      );
+    }
+    const restored = await get('/api/admin/overview');
+    expect(restored.json().data.unpublishedChanges).toBe(false);
   });
 });
 
@@ -201,6 +222,22 @@ describe('GET /api/admin/vocabulary', () => {
     expect(data.enablement['sayyidas-cove'].behaviors).toHaveLength(23);
     expect(data.enablement['sayyidas-cove'].animal_interaction).toHaveLength(11);
   });
+
+  it('lists an aviary with zero enablements as an all-empty bucket, not a missing key', async () => {
+    await query(`INSERT INTO aviaries (slug, name) VALUES ('empty-test-aviary', 'Empty Test')`);
+    try {
+      const response = await get('/api/admin/vocabulary');
+      expect(response.json().data.enablement['empty-test-aviary']).toEqual({
+        behaviors: [],
+        object: [],
+        object_interaction: [],
+        animal: [],
+        animal_interaction: [],
+      });
+    } finally {
+      await query(`DELETE FROM aviaries WHERE slug = 'empty-test-aviary'`);
+    }
+  });
 });
 
 describe('GET /api/admin/config-versions', () => {
@@ -230,6 +267,8 @@ describe('GET /api/admin/submissions', () => {
 
     const alice = items[1];
     expect(alice).toMatchObject({
+      // The id IS the Excel-download capability (P3-D6) — pin it exactly
+      id: aliceObservationId,
       observationDate: '2026-03-01',
       aviarySlug: 'sayyidas-cove',
       aviaryName: "Sayyida's Cove",
@@ -277,5 +316,13 @@ describe('GET /api/admin/submissions', () => {
   it('rejects malformed filters', async () => {
     const response = await get('/api/admin/submissions?from=yesterday');
     expect(response.statusCode).toBe(400);
+  });
+
+  it('rejects calendar-invalid dates with a 400, not a Postgres 500', async () => {
+    for (const bad of ['2026-02-30', '2026-13-01', '2027-02-29']) {
+      const response = await get(`/api/admin/submissions?from=${bad}`);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ success: false, error: 'Invalid filter parameters' });
+    }
   });
 });

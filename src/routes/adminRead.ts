@@ -14,9 +14,21 @@ import { query } from '../db/index.js';
 
 const VOCAB_KINDS = ['object', 'object_interaction', 'animal', 'animal_interaction'] as const;
 
+// Shape AND calendar validity: '2026-02-30' passes the regex but must 400,
+// not reach Postgres and 500. Date.parse alone is NOT enough — V8 rolls
+// out-of-range days over (Feb 30 → Mar 2) — so round-trip the parsed date
+// back to a string and require it to match.
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((value) => {
+    const time = Date.parse(value); // date-only ISO strings parse as UTC midnight
+    return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value;
+  });
+
 const submissionsQuerySchema = z.object({
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
   observer: z.string().max(255).optional(),
   aviary: z.string().max(255).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -148,8 +160,10 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
   // GET /vocabulary — the full catalog + per-aviary enablement matrix
   // ---------------------------------------------------------------------------
   app.get('/vocabulary', async (_request, reply) => {
-    const [groups, behaviors, options, behaviorEnablement, optionEnablement] = await Promise.all([
-      query<{ name: string; sortOrder: number }>(
+    const [allAviaries, groups, behaviors, options, behaviorEnablement, optionEnablement] =
+      await Promise.all([
+        query<{ slug: string }>(`SELECT slug FROM aviaries ORDER BY slug`),
+        query<{ name: string; sortOrder: number }>(
         `SELECT name, sort_order AS "sortOrder" FROM behavior_groups ORDER BY sort_order`
       ),
       query<{
@@ -203,6 +217,10 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
       }
       return enablement[slug];
     };
+    // Seed a bucket for EVERY aviary first: one with zero enablements (e.g. a
+    // freshly created blank aviary) must appear as an all-empty column in the
+    // matrix, not silently vanish from it
+    for (const row of allAviaries.rows) bucketFor(row.slug);
     for (const row of behaviorEnablement.rows) bucketFor(row.slug).behaviors!.push(row.value);
     for (const row of optionEnablement.rows) bucketFor(row.slug)[row.kind]!.push(row.value);
 
