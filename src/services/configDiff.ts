@@ -30,7 +30,13 @@ export interface AviaryEntry {
   name: string;
   isActive: boolean;
   perchDiagrams: { url: string; label: string }[];
-  perches: { value: string; label: string; group: string | null; retired: boolean }[];
+  perches: {
+    value: string;
+    label: string;
+    group: string | null;
+    sortOrder: number;
+    retired: boolean;
+  }[];
   subjects: {
     name: string;
     species: string;
@@ -82,10 +88,12 @@ export function appendOnlyViolations(
   next: ConfigDoc
 ): string[] {
   const violations: string[] = [];
+  // Keyed by entity, not message text: the same removal found in several
+  // prior versions reports once (the first version it appeared in)
   const seen = new Set<string>();
-  const add = (message: string): void => {
-    if (!seen.has(message)) {
-      seen.add(message);
+  const add = (key: string, message: string): void => {
+    if (!seen.has(key)) {
+      seen.add(key);
       violations.push(message);
     }
   };
@@ -98,6 +106,7 @@ export function appendOnlyViolations(
     for (const behavior of prior.config.behaviors) {
       if (!nextBehaviors.has(behavior.value)) {
         add(
+          `behavior:${behavior.value}`,
           `Behavior "${behavior.value}" was published in version ${prior.version} and cannot be removed or renamed — retire it instead.`
         );
       }
@@ -105,6 +114,7 @@ export function appendOnlyViolations(
     for (const group of prior.config.behaviorGroups) {
       if (!nextGroups.has(group.name)) {
         add(
+          `group:${group.name}`,
           `Behavior group "${group.name}" was published in version ${prior.version} and cannot be removed or renamed.`
         );
       }
@@ -114,6 +124,7 @@ export function appendOnlyViolations(
       for (const option of prior.config[key]) {
         if (!nextValues.has(option.value)) {
           add(
+            `${key}:${option.value}`,
             `The ${label} "${option.value}" was published in version ${prior.version} and cannot be removed or renamed — retire it instead.`
           );
         }
@@ -123,6 +134,7 @@ export function appendOnlyViolations(
       const nextAviary = nextAviaries.get(aviary.slug);
       if (!nextAviary) {
         add(
+          `aviary:${aviary.slug}`,
           `Aviary "${aviary.slug}" was published in version ${prior.version} and cannot be removed or renamed.`
         );
         continue;
@@ -131,6 +143,7 @@ export function appendOnlyViolations(
       for (const perch of aviary.perches) {
         if (!nextPerches.has(perch.value)) {
           add(
+            `perch:${aviary.slug}/${perch.value}`,
             `Perch "${perch.value}" in aviary "${aviary.slug}" was published in version ${prior.version} and cannot be removed or renamed — retire it instead.`
           );
         }
@@ -139,6 +152,7 @@ export function appendOnlyViolations(
       for (const subject of aviary.subjects) {
         if (!nextSubjects.has(subject.name)) {
           add(
+            `subject:${aviary.slug}/${subject.name}`,
             `Subject "${subject.name}" in aviary "${aviary.slug}" was published in version ${prior.version} and cannot be removed or renamed — record a departure instead.`
           );
         }
@@ -248,17 +262,32 @@ export function diffConfigs(prior: ConfigDoc | null, next: ConfigDoc): ConfigDif
       changes.push(`Aviary "${aviary.slug}" is now ${aviary.isActive ? 'active' : 'inactive'}.`);
     }
 
+    // Independent checks (not else-if): a perch retired AND relabeled in the
+    // same draft must report both. Every field compose_config emits is
+    // compared — an edit that flips the jsonb identity gate but produces no
+    // change line would let publish proceed with an empty review diff.
     const beforePerches = byValue(before.perches);
     for (const perch of aviary.perches) {
       const prev = beforePerches.get(perch.value);
       if (!prev) {
         changes.push(`Perch added to "${aviary.slug}": "${perch.label}" (${perch.value}).`);
-      } else if (!prev.retired && perch.retired) {
+        continue;
+      }
+      if (!prev.retired && perch.retired) {
         changes.push(`Perch retired in "${aviary.slug}": "${perch.value}".`);
       } else if (prev.retired && !perch.retired) {
         changes.push(`Perch unretired in "${aviary.slug}": "${perch.value}".`);
-      } else if (prev.label !== perch.label) {
+      }
+      if (prev.label !== perch.label) {
         changes.push(`Perch label changed in "${aviary.slug}": "${prev.label}" → "${perch.label}" (${perch.value}).`);
+      }
+      if ((prev.group ?? null) !== (perch.group ?? null)) {
+        changes.push(
+          `Perch "${perch.value}" in "${aviary.slug}" moved to group "${perch.group ?? '(none)'}".`
+        );
+      }
+      if (prev.sortOrder !== perch.sortOrder) {
+        changes.push(`Perch "${perch.value}" in "${aviary.slug}" changed its sort position.`);
       }
     }
 
@@ -280,6 +309,11 @@ export function diffConfigs(prior: ConfigDoc | null, next: ConfigDoc): ConfigDif
           subject.departedOn
             ? `Subject "${subject.name}" in "${aviary.slug}" departed on ${subject.departedOn}.`
             : `Subject "${subject.name}" in "${aviary.slug}" is no longer marked departed.`
+        );
+      }
+      if (prev.species !== subject.species) {
+        changes.push(
+          `Subject "${subject.name}" in "${aviary.slug}" changed species: "${prev.species}" → "${subject.species}".`
         );
       }
     }

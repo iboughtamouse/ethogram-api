@@ -53,6 +53,10 @@ beforeAll(async () => {
   );
   testUserId = user.rows[0]!.id;
   await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [testUserId]);
+  // An aborted previous run leaves publish audit rows whose entity_id can
+  // collide with this run's version numbers (the id sequence is rewound by
+  // restore()), breaking the toHaveLength(1) audit assertion
+  await query(`DELETE FROM audit_log WHERE admin_user_id = $1`, [testUserId]);
 
   session = generateToken();
   await query(
@@ -153,6 +157,43 @@ describe('POST /api/admin/config/publish', () => {
       // The public config endpoint serves the new version
       const publicConfig = await app.inject({ method: 'GET', url: '/api/config' });
       expect(publicConfig.json().version).toBe(version);
+    } finally {
+      await restore();
+    }
+  });
+
+  it('serializes concurrent publishes: one wins, the other sees nothing left to publish', async () => {
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/admin/behaviors',
+        headers: CSRF,
+        cookies: { [SESSION_COOKIE]: session },
+        payload: {
+          value: 'ctest_racer',
+          label: 'CTest Racer',
+          group: 'Other',
+          requiresLocation: false,
+          requiresObject: false,
+          requiresObjectInteraction: false,
+          requiresAnimal: false,
+          requiresAnimalInteraction: false,
+          requiresDescription: false,
+          excelRowLabel: 'CTest Racer',
+        },
+      });
+      expect(created.statusCode).toBe(201);
+
+      // Without the advisory lock both requests could validate against
+      // pre-race state and both insert; with it, exactly one version lands
+      const [a, b] = await Promise.all([publish({ notes: 'race A' }), publish({ notes: 'race B' })]);
+      expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409]);
+
+      const added = await query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM config_versions WHERE id > $1`,
+        [baselineVersion]
+      );
+      expect(added.rows[0]!.count).toBe(1);
     } finally {
       await restore();
     }

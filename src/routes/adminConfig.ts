@@ -28,16 +28,19 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
   // GET /config/diff — the review-step summary (§5 MVP): what publish would do
   // ---------------------------------------------------------------------------
   app.get('/config/diff', async (_request, reply) => {
-    const [nextResult, priorsResult, identicalResult] = await Promise.all([
-      query<{ config: ConfigDoc }>(`SELECT compose_config() AS config`),
-      query<{ id: number; config: ConfigDoc }>(`SELECT id, config FROM config_versions ORDER BY id`),
-      query<{ identical: boolean }>(
-        `SELECT compose_config() IS NOT DISTINCT FROM
-                (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS identical`
+    // One statement computes both the document and the identical flag, so
+    // they come from one snapshot — a concurrent draft edit can't make the
+    // flag disagree with the document it describes
+    const [snapshotResult, priorsResult] = await Promise.all([
+      query<{ config: ConfigDoc; identical: boolean }>(
+        `SELECT compose_config() AS config,
+                compose_config() IS NOT DISTINCT FROM
+                  (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS identical`
       ),
+      query<{ id: number; config: ConfigDoc }>(`SELECT id, config FROM config_versions ORDER BY id`),
     ]);
 
-    const next = nextResult.rows[0]!.config;
+    const next = snapshotResult.rows[0]!.config;
     const priors = priorsResult.rows.map((row) => ({ version: row.id, config: row.config }));
     const latest = priors[priors.length - 1] ?? null;
 
@@ -47,7 +50,7 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(200).send({
       success: true,
       data: {
-        identical: identicalResult.rows[0]!.identical,
+        identical: snapshotResult.rows[0]!.identical,
         latestVersion: latest?.version ?? null,
         changes: summary.changes,
         flagChanges: summary.flagChanges,
@@ -74,11 +77,16 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
       // both validate against pre-race state and both insert (design §3)
       await client.query(`SELECT pg_advisory_xact_lock(hashtext('ethogram-config-publish'))`);
 
-      const identical = await client.query<{ identical: boolean }>(
-        `SELECT compose_config() IS NOT DISTINCT FROM
-                (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS identical`
+      // One statement for the document AND the no-op gate: at READ COMMITTED
+      // each statement gets its own snapshot, so computing these separately
+      // would let a concurrent draft edit slip a no-op version past the gate
+      // (the gate sees one state, the insert another)
+      const snapshot = await client.query<{ config: ConfigDoc; identical: boolean }>(
+        `SELECT compose_config() AS config,
+                compose_config() IS NOT DISTINCT FROM
+                  (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS identical`
       );
-      if (identical.rows[0]!.identical) {
+      if (snapshot.rows[0]!.identical) {
         await client.query('ROLLBACK');
         return reply.status(409).send({
           success: false,
@@ -86,13 +94,10 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const nextResult = await client.query<{ config: ConfigDoc }>(
-        `SELECT compose_config() AS config`
-      );
       const priorsResult = await client.query<{ id: number; config: ConfigDoc }>(
         `SELECT id, config FROM config_versions ORDER BY id`
       );
-      const next = nextResult.rows[0]!.config;
+      const next = snapshot.rows[0]!.config;
       const priors = priorsResult.rows.map((row) => ({ version: row.id, config: row.config }));
       const latest = priors[priors.length - 1] ?? null;
 

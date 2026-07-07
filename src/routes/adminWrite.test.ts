@@ -56,6 +56,9 @@ beforeAll(async () => {
   );
   testUserId = user.rows[0]!.id;
   await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [testUserId]);
+  // A run aborted before afterAll leaves audit rows behind; the audit-trail
+  // assertions below need a clean slate for this user
+  await query(`DELETE FROM audit_log WHERE admin_user_id = $1`, [testUserId]);
 
   session = generateToken();
   await query(
@@ -83,6 +86,20 @@ describe('guard', () => {
       payload: { slug: 'nope', name: 'Nope' },
     });
     expect(response.statusCode).toBe(401);
+  });
+
+  it('answers PATCH preflights — the editing UI is all PATCH mutations', async () => {
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/admin/aviaries/sayyidas-cove',
+      headers: {
+        origin: 'http://localhost:5174',
+        'access-control-request-method': 'PATCH',
+        'access-control-request-headers': 'content-type,x-ethogram-admin',
+      },
+    });
+    expect(response.statusCode).toBeLessThan(300);
+    expect(response.headers['access-control-allow-methods']).toContain('PATCH');
   });
 });
 
@@ -158,6 +175,27 @@ describe('perches', () => {
     expect(response.statusCode).toBe(409);
   });
 
+  it('rejects values that cannot round-trip as a URL path segment', async () => {
+    // '.'/'..' are swallowed by path normalization and slashes split the
+    // segment — such a perch could be created but never PATCHed or DELETEd
+    for (const value of ['.', '..', 'a/b', 'a\\b', 'zw\u200B']) {
+      const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
+        value,
+        label: 'Unaddressable',
+      });
+      expect(response.statusCode, `value ${JSON.stringify(value)}`).toBe(400);
+    }
+  });
+
+  it('rejects sort orders beyond the integer column range', async () => {
+    const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
+      value: 'W9',
+      label: 'Overflow',
+      sortOrder: 2 ** 32,
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
   it('retires and unretires', async () => {
     await authed('PATCH', `/api/admin/aviaries/${AVIARY}/perches/W2`, { retired: true });
     const retired = await query(
@@ -210,6 +248,20 @@ describe('subjects', () => {
         arrivedOn: '2026-07-01',
       });
       expect(response.statusCode).toBe(400);
+    }
+  });
+
+  it('rejects names with control or invisible formatting characters', async () => {
+    // A zero-width space inside "Juvenile" renders identically to the
+    // reserved generic literal but compares as a different string
+    for (const name of ['Juv\u200Benile', 'Bell\u0007', 'Soft\u00ADHyphen', 'Word\u2060Joiner']) {
+      const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
+        name,
+        species: 'Barred Owl',
+        type: 'juvenile',
+        arrivedOn: '2026-07-01',
+      });
+      expect(response.statusCode, `name ${JSON.stringify(name)}`).toBe(400);
     }
   });
 
@@ -381,33 +433,43 @@ describe('behaviors and groups', () => {
         `SELECT excel_row_order FROM behaviors WHERE value = 'flying'`
       )
     ).rows[0]!.excel_row_order;
-    const inserted = await authed('POST', '/api/admin/behaviors', {
-      value: 'wtest_inserted',
-      label: 'WTest Inserted',
-      group: 'WTest Group',
-      requiresLocation: false,
-      requiresObject: false,
-      requiresObjectInteraction: false,
-      requiresAnimal: false,
-      requiresAnimalInteraction: false,
-      requiresDescription: false,
-      excelRowLabel: 'WTest Inserted',
-      insertAfter: 'flying',
-    });
-    expect(inserted.statusCode).toBe(201);
+    try {
+      const inserted = await authed('POST', '/api/admin/behaviors', {
+        value: 'wtest_inserted',
+        label: 'WTest Inserted',
+        group: 'WTest Group',
+        requiresLocation: false,
+        requiresObject: false,
+        requiresObjectInteraction: false,
+        requiresAnimal: false,
+        requiresAnimalInteraction: false,
+        requiresDescription: false,
+        excelRowLabel: 'WTest Inserted',
+        insertAfter: 'flying',
+      });
+      expect(inserted.statusCode).toBe(201);
 
-    const insertedOrder = (
-      await query<{ excel_row_order: number }>(
+      const insertedOrder = (
+        await query<{ excel_row_order: number }>(
+          `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_inserted'`
+        )
+      ).rows[0]!.excel_row_order;
+      expect(insertedOrder).toBe(anchorBefore + 1);
+    } finally {
+      // Restore the seed row map exactly even when an assertion above fails —
+      // the insertAfter shift touches EVERY seed behavior at/after the anchor,
+      // and sweep() alone cannot unshift them
+      const leftover = await query<{ excel_row_order: number }>(
         `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_inserted'`
-      )
-    ).rows[0]!.excel_row_order;
-    expect(insertedOrder).toBe(anchorBefore + 1);
-
-    // Restore the seed row map exactly: remove the inserted row and unshift
-    await query(`DELETE FROM behaviors WHERE value = 'wtest_inserted'`);
-    await query(`UPDATE behaviors SET excel_row_order = excel_row_order - 1 WHERE excel_row_order > $1`, [
-      insertedOrder,
-    ]);
+      );
+      if (leftover.rows[0]) {
+        await query(`DELETE FROM behaviors WHERE value = 'wtest_inserted'`);
+        await query(
+          `UPDATE behaviors SET excel_row_order = excel_row_order - 1 WHERE excel_row_order > $1`,
+          [leftover.rows[0].excel_row_order]
+        );
+      }
+    }
     const anchorAfter = (
       await query<{ excel_row_order: number }>(
         `SELECT excel_row_order FROM behaviors WHERE value = 'flying'`
@@ -523,5 +585,64 @@ describe('enablement', () => {
        WHERE a.slug = 'sayyidas-cove'`
     );
     expect(sayyidas.rows).toHaveLength(23);
+  });
+
+  it('truly REPLACES the set — a second PUT removes everything the first enabled', async () => {
+    const second = await authed('PUT', `/api/admin/aviaries/${AVIARY}/enablement`, {
+      behaviors: ['resting_alert'],
+      object: [],
+      object_interaction: [],
+      animal: [],
+      animal_interaction: [],
+    });
+    expect(second.statusCode).toBe(200);
+
+    const behaviors = await query<{ value: string }>(
+      `SELECT b.value FROM aviary_behaviors ab
+       JOIN aviaries a ON a.id = ab.aviary_id JOIN behaviors b ON b.id = ab.behavior_id
+       WHERE a.slug = $1`,
+      [AVIARY]
+    );
+    expect(behaviors.rows.map((r) => r.value)).toEqual(['resting_alert']);
+
+    const options = await query(
+      `SELECT 1 FROM aviary_vocab_options av JOIN aviaries a ON a.id = av.aviary_id
+       WHERE a.slug = $1`,
+      [AVIARY]
+    );
+    expect(options.rows).toHaveLength(0);
+  });
+});
+
+describe('audit trail (P3-D5)', () => {
+  // Runs last: by now every mutation flavor above has fired at least once,
+  // so a route that stopped writing its audit row fails here
+  it('has an attributed row for every mutation flavor exercised by this file', async () => {
+    const rows = await query<{ action: string; entity: string }>(
+      `SELECT DISTINCT action, entity FROM audit_log WHERE admin_user_id = $1`,
+      [testUserId]
+    );
+    const have = new Set(rows.rows.map((r) => `${r.action}:${r.entity}`));
+    for (const expected of [
+      'create:aviary',
+      'update:aviary',
+      'create:perch',
+      'update:perch',
+      'delete:perch',
+      'create:subject',
+      'update:subject',
+      'change_type:subject',
+      'delete:subject',
+      'create:behavior_group',
+      'create:behavior',
+      'update:behavior',
+      'delete:behavior',
+      'create:vocab_option',
+      'update:vocab_option',
+      'delete:vocab_option',
+      'set_enablement:aviary',
+    ]) {
+      expect(have.has(expected), `missing audit row for ${expected}`).toBe(true);
+    }
   });
 });

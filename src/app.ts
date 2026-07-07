@@ -20,7 +20,9 @@ export async function buildApp() {
   // it only applies to the explicit ALLOWED_ORIGINS list (never a wildcard)
   await app.register(cors, {
     origin: config.allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    // PATCH: the 3C editing endpoints are the API's first PATCH routes —
+    // without it here, every browser preflight for them is refused
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,
   });
 

@@ -12,8 +12,9 @@
  */
 
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
+import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { pool, query } from '../db/index.js';
+import { pool, query, withTransaction } from '../db/index.js';
 import { isoDate } from '../utils/isoDate.js';
 import { sanitizeSheetName } from '../services/excel.js';
 import { GENERIC_SUBJECT_IDS } from '../constants.js';
@@ -40,17 +41,50 @@ const wireValueSchema = z
   .string()
   .regex(/^[a-z0-9][a-z0-9_-]*$/, 'lowercase letters, digits, underscores, hyphens')
   .max(100);
+// Postgres INTEGER bounds — z.number().int() alone admits values up to 2^53,
+// which the int4 columns reject with an unhandled overflow (a 500)
+const sortOrderSchema = z.number().int().min(-2147483648).max(2147483647);
+// Control (Cc) and invisible formatting (Cf) characters survive trim() and
+// the Excel sheet-name rules, producing names that render identically to a
+// different string (e.g. a zero-width space inside "Juvenile")
+const hasInvisibleChars = (value: string): boolean => /[\p{Cc}\p{Cf}]/u.test(value);
+// Perch values become URL path segments for PATCH/DELETE: '.' and '..' are
+// swallowed by path normalization and raw slashes split the segment, leaving
+// the perch uneditable once created
+const perchValueSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(20)
+  .refine(
+    (value) =>
+      value !== '.' && value !== '..' && !/[/\\]/.test(value) && !hasInvisibleChars(value),
+    'no slashes, control characters, or "." / ".."'
+  );
 
 function isPgError(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: string }).code === code;
 }
 
 /** True if any published version's document contains the given fragment. */
-async function everPublished(fragment: unknown): Promise<boolean> {
-  const result = await query(`SELECT 1 FROM config_versions WHERE config @> $1::jsonb LIMIT 1`, [
-    JSON.stringify(fragment),
-  ]);
+async function everPublished(
+  fragment: unknown,
+  client: Pool | PoolClient = pool
+): Promise<boolean> {
+  const result = await client.query(
+    `SELECT 1 FROM config_versions WHERE config @> $1::jsonb LIMIT 1`,
+    [JSON.stringify(fragment)]
+  );
   return result.rows.length > 0;
+}
+
+/**
+ * Serialize the surrounding transaction against POST /config/publish (same
+ * advisory key, adminConfig.ts). Deletes take it so the published-containment
+ * guard can't race a publish that captures the row between check and delete.
+ */
+async function lockAgainstPublish(client: PoolClient): Promise<void> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext('ethogram-config-publish'))`);
 }
 
 async function aviaryBySlug(slug: string): Promise<{ id: string; slug: string } | null> {
@@ -80,20 +114,25 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     const { slug, name } = parsed.data;
 
     try {
-      await query(`INSERT INTO aviaries (slug, name) VALUES ($1, $2)`, [slug, name]);
+      await withTransaction(async (client) => {
+        await client.query(`INSERT INTO aviaries (slug, name) VALUES ($1, $2)`, [slug, name]);
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'create',
+            entity: 'aviary',
+            entityId: slug,
+            detail: { name },
+          },
+          client
+        );
+      });
     } catch (error) {
       if (isPgError(error, '23505')) {
         return fail(reply, 409, 'An aviary with that slug or name already exists');
       }
       throw error;
     }
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'create',
-      entity: 'aviary',
-      entityId: slug,
-      detail: { name },
-    });
     return reply.status(201).send({ success: true, data: { slug, name } });
   });
 
@@ -120,12 +159,27 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
 
     let updated;
     try {
-      updated = await query<{ slug: string; name: string; isActive: boolean }>(
-        `UPDATE aviaries SET ${sets.join(', ')}
-         WHERE slug = $${params.length}
-         RETURNING slug, name, is_active AS "isActive"`,
-        params
-      );
+      updated = await withTransaction(async (client) => {
+        const result = await client.query<{ slug: string; name: string; isActive: boolean }>(
+          `UPDATE aviaries SET ${sets.join(', ')}
+           WHERE slug = $${params.length}
+           RETURNING slug, name, is_active AS "isActive"`,
+          params
+        );
+        if (result.rows[0]) {
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: 'update',
+              entity: 'aviary',
+              entityId: request.params.slug,
+              detail: parsed.data,
+            },
+            client
+          );
+        }
+        return result;
+      });
     } catch (error) {
       if (isPgError(error, '23505')) {
         return fail(reply, 409, 'Another aviary already has that name');
@@ -134,13 +188,6 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     }
     if (!updated.rows[0]) return fail(reply, 404, 'Unknown aviary');
 
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'update',
-      entity: 'aviary',
-      entityId: request.params.slug,
-      detail: parsed.data,
-    });
     return reply.status(200).send({ success: true, data: updated.rows[0] });
   });
 
@@ -151,10 +198,10 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { slug: string } }>('/aviaries/:slug/perches', async (request, reply) => {
     const parsed = z
       .object({
-        value: z.string().trim().min(1).max(20),
+        value: perchValueSchema,
         label: labelSchema,
         group: z.string().trim().min(1).max(100).nullish(),
-        sortOrder: z.number().int().optional(),
+        sortOrder: sortOrderSchema.optional(),
       })
       .safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'A perch needs a value (max 20 chars) and a label');
@@ -164,25 +211,30 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     const { value, label, group, sortOrder } = parsed.data;
 
     try {
-      await query(
-        `INSERT INTO perches (aviary_id, value, label, perch_group, sort_order)
-         VALUES ($1, $2, $3, $4,
-                 COALESCE($5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM perches WHERE aviary_id = $1)))`,
-        [aviary.id, value, label, group ?? null, sortOrder ?? null]
-      );
+      await withTransaction(async (client) => {
+        await client.query(
+          `INSERT INTO perches (aviary_id, value, label, perch_group, sort_order)
+           VALUES ($1, $2, $3, $4,
+                   COALESCE($5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM perches WHERE aviary_id = $1)))`,
+          [aviary.id, value, label, group ?? null, sortOrder ?? null]
+        );
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'create',
+            entity: 'perch',
+            entityId: `${aviary.slug}/${value}`,
+            detail: { label, group: group ?? null },
+          },
+          client
+        );
+      });
     } catch (error) {
       if (isPgError(error, '23505')) {
         return fail(reply, 409, `Perch "${value}" already exists in this aviary`);
       }
       throw error;
     }
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'create',
-      entity: 'perch',
-      entityId: `${aviary.slug}/${value}`,
-      detail: { label, group: group ?? null },
-    });
     return reply.status(201).send({ success: true, data: { value, label } });
   });
 
@@ -193,7 +245,7 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         .object({
           label: labelSchema.optional(),
           group: z.string().trim().min(1).max(100).nullable().optional(),
-          sortOrder: z.number().int().optional(),
+          sortOrder: sortOrderSchema.optional(),
           retired: z.boolean().optional(),
         })
         .refine((body) => Object.values(body).some((v) => v !== undefined))
@@ -224,21 +276,29 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       }
       params.push(aviary.id, request.params.value);
 
-      const updated = await query(
-        `UPDATE perches SET ${sets.join(', ')}
-         WHERE aviary_id = $${params.length - 1} AND value = $${params.length}
-         RETURNING value`,
-        params
-      );
+      const updated = await withTransaction(async (client) => {
+        const result = await client.query(
+          `UPDATE perches SET ${sets.join(', ')}
+           WHERE aviary_id = $${params.length - 1} AND value = $${params.length}
+           RETURNING value`,
+          params
+        );
+        if (result.rows[0]) {
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: 'update',
+              entity: 'perch',
+              entityId: `${aviary.slug}/${request.params.value}`,
+              detail: parsed.data,
+            },
+            client
+          );
+        }
+        return result;
+      });
       if (!updated.rows[0]) return fail(reply, 404, 'Unknown perch');
 
-      await recordAudit({
-        adminUserId: request.adminUser!.id,
-        action: 'update',
-        entity: 'perch',
-        entityId: `${aviary.slug}/${request.params.value}`,
-        detail: parsed.data,
-      });
       return reply.status(200).send({ success: true, data: { value: request.params.value } });
     }
   );
@@ -249,29 +309,40 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       const aviary = await aviaryBySlug(request.params.slug);
       if (!aviary) return fail(reply, 404, 'Unknown aviary');
 
-      const published = await everPublished({
-        aviaries: [{ slug: aviary.slug, perches: [{ value: request.params.value }] }],
+      const outcome = await withTransaction(async (client) => {
+        await lockAgainstPublish(client);
+        const published = await everPublished(
+          { aviaries: [{ slug: aviary.slug, perches: [{ value: request.params.value }] }] },
+          client
+        );
+        if (published) return 'published' as const;
+
+        const deleted = await client.query(
+          `DELETE FROM perches WHERE aviary_id = $1 AND value = $2 RETURNING value`,
+          [aviary.id, request.params.value]
+        );
+        if (!deleted.rows[0]) return 'missing' as const;
+
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'delete',
+            entity: 'perch',
+            entityId: `${aviary.slug}/${request.params.value}`,
+          },
+          client
+        );
+        return 'deleted' as const;
       });
-      if (published) {
+
+      if (outcome === 'published') {
         return fail(
           reply,
           409,
           'This perch appears in a published config version and cannot be deleted — retire it instead'
         );
       }
-
-      const deleted = await query(
-        `DELETE FROM perches WHERE aviary_id = $1 AND value = $2 RETURNING value`,
-        [aviary.id, request.params.value]
-      );
-      if (!deleted.rows[0]) return fail(reply, 404, 'Unknown perch');
-
-      await recordAudit({
-        adminUserId: request.adminUser!.id,
-        action: 'delete',
-        entity: 'perch',
-        entityId: `${aviary.slug}/${request.params.value}`,
-      });
+      if (outcome === 'missing') return fail(reply, 404, 'Unknown perch');
       return reply.status(200).send({ success: true, data: { value: request.params.value } });
     }
   );
@@ -283,7 +354,15 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { slug: string } }>('/aviaries/:slug/subjects', async (request, reply) => {
     const parsed = z
       .object({
-        name: z.string().trim().min(1).max(255),
+        name: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .refine(
+            (value) => !hasInvisibleChars(value),
+            'no control or invisible formatting characters'
+          ),
         species: labelSchema,
         type: z.enum(['foster_parent', 'juvenile', 'baby']),
         arrivedOn: isoDate,
@@ -336,11 +415,24 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
 
     let inserted;
     try {
-      inserted = await query<{ id: string }>(
-        `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [aviary.id, name, species, type, arrivedOn]
-      );
+      inserted = await withTransaction(async (client) => {
+        const result = await client.query<{ id: string }>(
+          `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [aviary.id, name, species, type, arrivedOn]
+        );
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'create',
+            entity: 'subject',
+            entityId: result.rows[0]!.id,
+            detail: { aviary: aviary.slug, name, species, type, arrivedOn },
+          },
+          client
+        );
+        return result;
+      });
     } catch (error) {
       if (isPgError(error, '23P01') || isPgError(error, '23505')) {
         return fail(reply, 409, `"${name}" already has an overlapping residency episode`);
@@ -348,13 +440,6 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       throw error;
     }
 
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'create',
-      entity: 'subject',
-      entityId: inserted.rows[0]!.id,
-      detail: { aviary: aviary.slug, name, species, type, arrivedOn },
-    });
     return reply.status(201).send({ success: true, data: { id: inserted.rows[0]!.id, name } });
   });
 
@@ -383,10 +468,25 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
 
     let updated;
     try {
-      updated = await query<{ id: string; name: string }>(
-        `UPDATE subjects SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, name`,
-        params
-      );
+      updated = await withTransaction(async (client) => {
+        const result = await client.query<{ id: string; name: string }>(
+          `UPDATE subjects SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, name`,
+          params
+        );
+        if (result.rows[0]) {
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: 'update',
+              entity: 'subject',
+              entityId: request.params.id,
+              detail: parsed.data,
+            },
+            client
+          );
+        }
+        return result;
+      });
     } catch (error) {
       if (isPgError(error, '23514')) {
         return fail(reply, 400, 'The departure date must be after the arrival date');
@@ -398,13 +498,6 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     }
     if (!updated.rows[0]) return fail(reply, 404, 'Unknown subject');
 
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'update',
-      entity: 'subject',
-      entityId: request.params.id,
-      detail: parsed.data,
-    });
     return reply.status(200).send({ success: true, data: updated.rows[0] });
   });
 
@@ -496,32 +589,44 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     const current = episode.rows[0];
     if (!current) return fail(reply, 404, 'Unknown subject');
 
-    const published = await everPublished({
-      aviaries: [
+    const outcome = await withTransaction(async (client) => {
+      await lockAgainstPublish(client);
+      const published = await everPublished(
         {
-          slug: current.slug,
-          subjects: [
-            { name: current.name, type: current.subject_type, arrivedOn: current.arrived_on },
+          aviaries: [
+            {
+              slug: current.slug,
+              subjects: [
+                { name: current.name, type: current.subject_type, arrivedOn: current.arrived_on },
+              ],
+            },
           ],
         },
-      ],
+        client
+      );
+      if (published) return 'published' as const;
+
+      await client.query(`DELETE FROM subjects WHERE id = $1`, [request.params.id]);
+      await recordAudit(
+        {
+          adminUserId: request.adminUser!.id,
+          action: 'delete',
+          entity: 'subject',
+          entityId: request.params.id,
+          detail: { aviary: current.slug, name: current.name },
+        },
+        client
+      );
+      return 'deleted' as const;
     });
-    if (published) {
+
+    if (outcome === 'published') {
       return fail(
         reply,
         409,
         'This episode appears in a published config version and cannot be deleted — record a departure instead'
       );
     }
-
-    await query(`DELETE FROM subjects WHERE id = $1`, [request.params.id]);
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'delete',
-      entity: 'subject',
-      entityId: request.params.id,
-      detail: { aviary: current.slug, name: current.name },
-    });
     return reply.status(200).send({ success: true, data: { id: request.params.id } });
   });
 
@@ -531,28 +636,33 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/behavior-groups', async (request, reply) => {
     const parsed = z
-      .object({ name: z.string().trim().min(1).max(100), sortOrder: z.number().int() })
+      .object({ name: z.string().trim().min(1).max(100), sortOrder: sortOrderSchema })
       .safeParse(request.body);
     if (!parsed.success) return fail(reply, 400, 'A group needs a name and a sort order');
 
     try {
-      await query(`INSERT INTO behavior_groups (name, sort_order) VALUES ($1, $2)`, [
-        parsed.data.name,
-        parsed.data.sortOrder,
-      ]);
+      await withTransaction(async (client) => {
+        await client.query(`INSERT INTO behavior_groups (name, sort_order) VALUES ($1, $2)`, [
+          parsed.data.name,
+          parsed.data.sortOrder,
+        ]);
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'create',
+            entity: 'behavior_group',
+            entityId: parsed.data.name,
+            detail: { sortOrder: parsed.data.sortOrder },
+          },
+          client
+        );
+      });
     } catch (error) {
       if (isPgError(error, '23505')) {
         return fail(reply, 409, 'A group with that name already exists');
       }
       throw error;
     }
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'create',
-      entity: 'behavior_group',
-      entityId: parsed.data.name,
-      detail: { sortOrder: parsed.data.sortOrder },
-    });
     return reply.status(201).send({ success: true, data: { name: parsed.data.name } });
   });
 
@@ -711,35 +821,39 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     }
     params.push(request.params.value);
 
-    const updated = await query(
-      `UPDATE behaviors SET ${sets.join(', ')} WHERE value = $${params.length} RETURNING value`,
-      params
-    );
+    const updated = await withTransaction(async (client) => {
+      const result = await client.query(
+        `UPDATE behaviors SET ${sets.join(', ')} WHERE value = $${params.length} RETURNING value`,
+        params
+      );
+      if (result.rows[0]) {
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'update',
+            entity: 'behavior',
+            entityId: request.params.value,
+            detail: body,
+          },
+          client
+        );
+      }
+      return result;
+    });
     if (!updated.rows[0]) return fail(reply, 404, 'Unknown behavior');
 
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'update',
-      entity: 'behavior',
-      entityId: request.params.value,
-      detail: body,
-    });
     return reply.status(200).send({ success: true, data: { value: request.params.value } });
   });
 
   app.delete<{ Params: { value: string } }>('/behaviors/:value', async (request, reply) => {
-    const published = await everPublished({ behaviors: [{ value: request.params.value }] });
-    if (published) {
-      return fail(
-        reply,
-        409,
-        'This behavior appears in a published config version and cannot be deleted — retire it instead'
+    const outcome = await withTransaction(async (client) => {
+      await lockAgainstPublish(client);
+      const published = await everPublished(
+        { behaviors: [{ value: request.params.value }] },
+        client
       );
-    }
+      if (published) return 'published' as const;
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
       await client.query(
         `DELETE FROM aviary_behaviors WHERE behavior_id = (SELECT id FROM behaviors WHERE value = $1)`,
         [request.params.value]
@@ -747,10 +861,8 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       const deleted = await client.query(`DELETE FROM behaviors WHERE value = $1 RETURNING value`, [
         request.params.value,
       ]);
-      if (!deleted.rows[0]) {
-        await client.query('ROLLBACK');
-        return fail(reply, 404, 'Unknown behavior');
-      }
+      if (!deleted.rows[0]) return 'missing' as const;
+
       await recordAudit(
         {
           adminUserId: request.adminUser!.id,
@@ -760,13 +872,17 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         },
         client
       );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+      return 'deleted' as const;
+    });
+
+    if (outcome === 'published') {
+      return fail(
+        reply,
+        409,
+        'This behavior appears in a published config version and cannot be deleted — retire it instead'
+      );
     }
+    if (outcome === 'missing') return fail(reply, 404, 'Unknown behavior');
     return reply.status(200).send({ success: true, data: { value: request.params.value } });
   });
 
@@ -782,24 +898,29 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     const { kind, value, label } = parsed.data;
 
     try {
-      await query(`INSERT INTO vocab_options (kind, value, label) VALUES ($1, $2, $3)`, [
-        kind,
-        value,
-        label,
-      ]);
+      await withTransaction(async (client) => {
+        await client.query(`INSERT INTO vocab_options (kind, value, label) VALUES ($1, $2, $3)`, [
+          kind,
+          value,
+          label,
+        ]);
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: 'create',
+            entity: 'vocab_option',
+            entityId: `${kind}/${value}`,
+            detail: { label },
+          },
+          client
+        );
+      });
     } catch (error) {
       if (isPgError(error, '23505')) {
         return fail(reply, 409, `The ${kind} option "${value}" already exists`);
       }
       throw error;
     }
-    await recordAudit({
-      adminUserId: request.adminUser!.id,
-      action: 'create',
-      entity: 'vocab_option',
-      entityId: `${kind}/${value}`,
-      detail: { label },
-    });
     return reply.status(201).send({ success: true, data: { kind, value, label } });
   });
 
@@ -827,21 +948,29 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       }
       params.push(kindParsed.data, request.params.value);
 
-      const updated = await query(
-        `UPDATE vocab_options SET ${sets.join(', ')}
-         WHERE kind = $${params.length - 1} AND value = $${params.length}
-         RETURNING value`,
-        params
-      );
+      const updated = await withTransaction(async (client) => {
+        const result = await client.query(
+          `UPDATE vocab_options SET ${sets.join(', ')}
+           WHERE kind = $${params.length - 1} AND value = $${params.length}
+           RETURNING value`,
+          params
+        );
+        if (result.rows[0]) {
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: 'update',
+              entity: 'vocab_option',
+              entityId: `${kindParsed.data}/${request.params.value}`,
+              detail: parsed.data,
+            },
+            client
+          );
+        }
+        return result;
+      });
       if (!updated.rows[0]) return fail(reply, 404, 'Unknown option');
 
-      await recordAudit({
-        adminUserId: request.adminUser!.id,
-        action: 'update',
-        entity: 'vocab_option',
-        entityId: `${kindParsed.data}/${request.params.value}`,
-        detail: parsed.data,
-      });
       return reply.status(200).send({ success: true, data: { value: request.params.value } });
     }
   );
@@ -853,20 +982,14 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       if (!kindParsed.success) return fail(reply, 404, 'Unknown option kind');
       const kind = kindParsed.data;
 
-      const published = await everPublished({
-        [KIND_TO_DOC_KEY[kind]]: [{ value: request.params.value }],
-      });
-      if (published) {
-        return fail(
-          reply,
-          409,
-          'This option appears in a published config version and cannot be deleted — retire it instead'
+      const outcome = await withTransaction(async (client) => {
+        await lockAgainstPublish(client);
+        const published = await everPublished(
+          { [KIND_TO_DOC_KEY[kind]]: [{ value: request.params.value }] },
+          client
         );
-      }
+        if (published) return 'published' as const;
 
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
         await client.query(
           `DELETE FROM aviary_vocab_options
            WHERE vocab_option_id = (SELECT id FROM vocab_options WHERE kind = $1 AND value = $2)`,
@@ -876,10 +999,8 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           `DELETE FROM vocab_options WHERE kind = $1 AND value = $2 RETURNING value`,
           [kind, request.params.value]
         );
-        if (!deleted.rows[0]) {
-          await client.query('ROLLBACK');
-          return fail(reply, 404, 'Unknown option');
-        }
+        if (!deleted.rows[0]) return 'missing' as const;
+
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
@@ -889,13 +1010,17 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           },
           client
         );
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
+        return 'deleted' as const;
+      });
+
+      if (outcome === 'published') {
+        return fail(
+          reply,
+          409,
+          'This option appears in a published config version and cannot be deleted — retire it instead'
+        );
       }
+      if (outcome === 'missing') return fail(reply, 404, 'Unknown option');
       return reply.status(200).send({ success: true, data: { value: request.params.value } });
     }
   );
