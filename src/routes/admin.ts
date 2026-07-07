@@ -16,6 +16,7 @@ import { query } from '../db/index.js';
 import { config } from '../config.js';
 import { generateToken, hashToken } from '../utils/adminTokens.js';
 import { sendAdminLoginEmail } from '../services/email.js';
+import { adminReadRoutes } from './adminRead.js';
 
 export const SESSION_COOKIE = 'ethogram_admin_session';
 
@@ -301,6 +302,9 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   // ---------------------------------------------------------------------------
   app.register(async (guarded) => {
     guarded.addHook('preHandler', requireAdminSession);
+
+    // Stage 3B: read-only dashboard endpoints
+    await guarded.register(adminReadRoutes);
 
     guarded.get('/me', async (request, reply) => {
       const { email, displayName } = request.adminUser!;
