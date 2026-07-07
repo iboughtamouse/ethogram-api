@@ -10,6 +10,12 @@ const envSchema = z.object({
   RESEND_API_KEY: isTest ? z.string().default('test_key') : z.string().min(1),
   EMAIL_FROM: z.string().email().default('test@test.com'),
   ALLOWED_ORIGINS: z.string().default('http://localhost:5173'),
+  // Admin dashboard (Phase 3): base URL magic links point at, and the session
+  // cookie's SameSite policy — 'lax' once admin.<domain>/api.<domain> share a
+  // registrable domain, 'none' for the documented cross-site fallback
+  // (vercel.app admin + railway.app api). 'none' forces Secure.
+  ADMIN_APP_URL: z.string().url().default('http://localhost:5174'),
+  ADMIN_COOKIE_SAMESITE: z.enum(['lax', 'none']).default('lax'),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -27,4 +33,8 @@ export const config = {
   resendApiKey: parsed.data.RESEND_API_KEY,
   emailFrom: parsed.data.EMAIL_FROM,
   allowedOrigins: parsed.data.ALLOWED_ORIGINS.split(','),
+  adminAppUrl: parsed.data.ADMIN_APP_URL.replace(/\/$/, ''),
+  adminCookieSameSite: parsed.data.ADMIN_COOKIE_SAMESITE,
+  adminCookieSecure:
+    parsed.data.ADMIN_COOKIE_SAMESITE === 'none' || process.env.NODE_ENV === 'production',
 } as const;
