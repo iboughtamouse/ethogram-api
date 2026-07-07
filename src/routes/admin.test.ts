@@ -209,6 +209,19 @@ describe('POST /api/admin/auth/request-link', () => {
     expect(response.statusCode).toBe(400);
   });
 
+  it('keeps framework 4xx errors in the {success, error} envelope (scoped handler)', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/admin/auth/request-link',
+      headers: { ...CSRF_HEADER, 'content-type': 'application/json' },
+      payload: '{not json',
+    });
+    expect(response.statusCode).toBe(400);
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(typeof body.error).toBe('string');
+  });
+
   it('opportunistically sweeps long-expired login tokens', async () => {
     await query(
       `INSERT INTO admin_login_tokens (admin_user_id, token_hash, expires_at)

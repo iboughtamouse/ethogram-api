@@ -10,12 +10,13 @@
  * (2) a required x-ethogram-admin header on mutations.
  */
 
-import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyError, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 import { config } from '../config.js';
 import { generateToken, hashToken } from '../utils/adminTokens.js';
 import { sendAdminLoginEmail } from '../services/email.js';
+import { adminReadRoutes } from './adminRead.js';
 
 export const SESSION_COOKIE = 'ethogram_admin_session';
 
@@ -145,6 +146,20 @@ async function requireAdminSession(
 }
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
+  // Scoped error handler: admin handlers run raw SQL without per-handler
+  // try/catch, and Fastify's default handler would leak the Postgres error
+  // message and SQLSTATE to the client. 4xx framework errors (malformed JSON
+  // bodies etc.) keep their message inside the {success, error} envelope;
+  // anything 5xx is logged and sanitized.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const status = error.statusCode && error.statusCode < 500 ? error.statusCode : 500;
+    if (status >= 500) request.log.error(error);
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Internal server error' : error.message,
+    });
+  });
+
   // CSRF guard for the whole /api/admin scope (CORS preflight OPTIONS is
   // answered by @fastify/cors before routing, so it never reaches this hook).
   app.addHook('onRequest', async (request, reply) => {
@@ -301,6 +316,9 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   // ---------------------------------------------------------------------------
   app.register(async (guarded) => {
     guarded.addHook('preHandler', requireAdminSession);
+
+    // Stage 3B: read-only dashboard endpoints
+    await guarded.register(adminReadRoutes);
 
     guarded.get('/me', async (request, reply) => {
       const { email, displayName } = request.adminUser!;
