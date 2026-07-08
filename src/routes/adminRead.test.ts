@@ -129,10 +129,10 @@ describe('GET /api/admin/overview', () => {
       name: "Sayyida's Cove",
       isActive: true,
       currentSubjects: 4, // Sayyida + juveniles 187(B)/216(O)/253(R)
-      perches: 38,
-      diagrams: 2,
+      perches: 50, // active only (overview filters retired); 009 re-catalog
+      diagrams: 3, // Eastern Perimeter / NW & Central / SW & Central (009)
     });
-    expect(latestVersion.version).toBe(3);
+    expect(latestVersion.version).toBe(4);
     expect(latestVersion.publishedAt).toBeTruthy();
     // Editing tables match the latest snapshot on a freshly migrated DB
     expect(unpublishedChanges).toBe(false);
@@ -165,13 +165,14 @@ describe('GET /api/admin/aviaries/:slug', () => {
     const data = response.json().data;
 
     expect(data.name).toBe("Sayyida's Cove");
-    expect(data.diagrams).toHaveLength(2);
+    expect(data.diagrams).toHaveLength(3); // 009 re-catalog: 3 diagram views
     for (const diagram of data.diagrams) {
       expect(diagram.url).toMatch(/^https:\/\/.*\.r2\.dev\/.*\.webp$/);
       expect(diagram.label).toBeTruthy();
     }
 
-    expect(data.perches).toHaveLength(38);
+    // Editing view includes retired perches: 50 active + 5 retired old-format specials
+    expect(data.perches).toHaveLength(55);
     expect(data.perches.find((p: { value: string }) => p.value === 'Ground')).toBeTruthy();
 
     expect(data.subjects).toHaveLength(4);
@@ -248,7 +249,7 @@ describe('GET /api/admin/config-versions', () => {
     expect(response.statusCode).toBe(200);
     const { versions } = response.json().data;
 
-    expect(versions.map((v: { version: number }) => v.version)).toEqual([3, 2, 1]);
+    expect(versions.map((v: { version: number }) => v.version)).toEqual([4, 3, 2, 1]);
     for (const version of versions) {
       expect(version.publishedAt).toBeTruthy();
     }
