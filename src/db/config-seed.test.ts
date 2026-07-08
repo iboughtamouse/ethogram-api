@@ -49,17 +49,24 @@ describe('config seed (migrations 002 + 003)', () => {
     ]);
   });
 
-  it("seeds Sayyida's Cove with 38 perches (VALID_PERCHES ∪ inline dropdown, incl. Ground)", async () => {
-    const result = await query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM perches p
-       JOIN aviaries a ON a.id = p.aviary_id WHERE a.slug = 'sayyidas-cove'`
+  it("catalogs Sayyida's Cove after the 009 re-catalog: 50 active perches + 5 retired old-format specials", async () => {
+    const result = await query<{ total: string; active: string; retired: string }>(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE retired_at IS NULL)::text AS active,
+              COUNT(*) FILTER (WHERE retired_at IS NOT NULL)::text AS retired
+       FROM perches p JOIN aviaries a ON a.id = p.aviary_id WHERE a.slug = 'sayyidas-cove'`
     );
-    expect(result.rows[0]!.count).toBe('38');
+    // Migration 009 relabelled 1-31, added 32-37 + the hyphenated specials (50
+    // active), and retired the superseded old-format specials Ground/BB1/BB2/F1/F2.
+    expect(result.rows[0]).toEqual({ total: '55', active: '50', retired: '5' });
 
-    const ground = await query<{ label: string; perch_group: string }>(
-      `SELECT label, perch_group FROM perches WHERE value = 'Ground'`
+    // 'Ground' is now the RETIRED old-format duplicate (the active ground is
+    // value 'G', relabelled to 'Ground' in 009); its label/group are untouched
+    // so historical rows still resolve.
+    const ground = await query<{ label: string; perch_group: string; retired: boolean }>(
+      `SELECT label, perch_group, retired_at IS NOT NULL AS retired FROM perches WHERE value = 'Ground'`
     );
-    expect(ground.rows[0]).toEqual({ label: 'Ground', perch_group: 'Common Locations' });
+    expect(ground.rows[0]).toEqual({ label: 'Ground', perch_group: 'Common Locations', retired: true });
   });
 
   it('seeds Sayyida + the 2026 juveniles as open episodes (migrations 003 + 005)', async () => {
