@@ -82,7 +82,6 @@ interface Metadata {
   endTime: string;
   aviary: string;
   patient: string;
-  mode: 'live' | 'vod';
 }
 
 /**

@@ -77,7 +77,6 @@ CREATE TABLE observations (
 
   -- Location context
   aviary VARCHAR(255) NOT NULL,
-  mode VARCHAR(10) NOT NULL CHECK (mode IN ('live', 'vod')),
 
   -- Multi-subject observation data (JSONB structure)
   time_slots JSONB NOT NULL,
@@ -124,7 +123,6 @@ COMMENT ON TABLE observations IS 'Behavioral observations of birds in aviaries, 
 | `start_time`          | TIME         | No       | Observation session start time (24-hour format)                               |
 | `end_time`            | TIME         | No       | Observation session end time (24-hour format)                                 |
 | `aviary`              | VARCHAR(255) | No       | Aviary name (e.g., "Sayyida's Cove")                                          |
-| `mode`                | VARCHAR(10)  | No       | Observation mode: `live` or `vod`                                             |
 | `time_slots`          | JSONB        | No       | Multi-subject observation data (see structure below)                          |
 | `emails`              | TEXT[]       | Yes      | Array of email addresses for Excel delivery (1-10)                            |
 | `submitted_at`        | TIMESTAMPTZ  | No       | When observation was submitted to backend (UTC)                               |
@@ -297,9 +295,6 @@ CREATE INDEX idx_observations_time_slots_gin
 ### Check Constraints
 
 ```sql
--- Mode must be 'live' or 'vod'
-CHECK (mode IN ('live', 'vod'))
-
 -- End time must be after start time
 CHECK (end_time > start_time)
 
@@ -608,7 +603,6 @@ LIMIT 10;
   "start_time": "15:00",
   "end_time": "15:30",
   "aviary": "Sayyida's Cove",
-  "mode": "live",
   "time_slots": {
     "15:00": [
       {
@@ -662,7 +656,6 @@ LIMIT 10;
   "start_time": "10:00",
   "end_time": "10:10",
   "aviary": "Sayyida's Cove",
-  "mode": "live",
   "time_slots": {
     "10:00": [
       {

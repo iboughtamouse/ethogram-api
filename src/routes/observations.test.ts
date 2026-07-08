@@ -48,7 +48,6 @@ const validBody = () => ({
       startTime: '14:00',
       endTime: '14:30',
       aviary: 'sayyidas-cove',
-      mode: 'live' as const,
     },
     observations: {
       '14:00': [
@@ -79,15 +78,14 @@ const validBody = () => ({
 const insertTestObservation = async (): Promise<string> => {
   const result = await query<{ id: string }>(
     `INSERT INTO observations (
-      observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      observer_name, observation_date, start_time, end_time, aviary, time_slots, submitted_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
     [
       'TestObserver',
       '2025-11-29',
       '14:00',
       '14:30',
       'Test Aviary',
-      'live',
       JSON.stringify({
         '14:00': [{ subjectType: 'foster_parent', subjectId: 'Sayyida', behavior: 'resting', location: '5', notes: '' }],
       }),
@@ -137,16 +135,14 @@ describe('POST /api/observations/submit', () => {
       observation_date: string;
       start_time: string;
       end_time: string;
-      mode: string;
       emails: string[];
       time_slots: Record<string, unknown[]>;
-    }>('SELECT observer_name, aviary, observation_date, start_time, end_time, mode, emails, time_slots FROM observations');
+    }>('SELECT observer_name, aviary, observation_date, start_time, end_time, emails, time_slots FROM observations');
 
     expect(result.rows).toHaveLength(1);
     const row = result.rows[0]!;
     expect(row.observer_name).toBe('TestObserver');
     expect(row.aviary).toBe("Sayyida's Cove");
-    expect(row.mode).toBe('live');
     expect(row.emails).toEqual(['test@example.com']);
     expect(row.time_slots).toBeDefined();
     expect(Object.keys(row.time_slots)).toContain('14:00');
@@ -228,7 +224,6 @@ describe('POST /api/observations/submit', () => {
             endTime: '14:30',
             aviary: "Sayyida's Cove",
             patient: 'Sayyida',
-            mode: 'live',
           },
           observations: {},
           submittedAt: '2025-11-29T20:00:00.000Z',
@@ -557,7 +552,6 @@ describe('POST /api/observations/submit', () => {
           startTime: '14:00',
           endTime: '14:30',
           aviary: 'sayyidas-cove',
-          mode: 'live' as const,
         },
         observations: {
           '14:00': [
@@ -744,7 +738,6 @@ describe('POST /api/observations/submit', () => {
           startTime: '14:00',
           endTime: '14:30',
           aviary: 'sayyidas-cove',
-          mode: 'live' as const,
         },
         observations: {
           '14:00': [
@@ -1088,15 +1081,14 @@ describe('POST /api/observations/:id/share', () => {
   it('derives the patient label from all subjects in the row (same rule as submit)', async () => {
     const result = await query<{ id: string }>(
       `INSERT INTO observations (
-        observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        observer_name, observation_date, start_time, end_time, aviary, time_slots, submitted_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       [
         'TestObserver',
         '2025-11-29',
         '14:00',
         '14:30',
         "Sayyida's Cove",
-        'live',
         JSON.stringify({
           '14:00': [
             { subjectType: 'foster_parent', subjectId: 'Sayyida', behavior: 'resting', location: '5', notes: '' },

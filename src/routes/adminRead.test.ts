@@ -26,9 +26,9 @@ async function insertObservation(fields: {
 }): Promise<string> {
   const result = await query<{ id: string }>(
     `INSERT INTO observations (
-      observer_name, observation_date, start_time, end_time, aviary, aviary_id, mode,
+      observer_name, observation_date, start_time, end_time, aviary, aviary_id,
       time_slots, submitted_at
-    ) VALUES ($1, $2, '14:00', '14:30', $3, $4, 'live', $5, $6) RETURNING id`,
+    ) VALUES ($1, $2, '14:00', '14:30', $3, $4, $5, $6) RETURNING id`,
     [
       fields.observer,
       fields.date,
@@ -283,7 +283,6 @@ describe('GET /api/admin/submissions', () => {
       observationDate: '2026-03-01',
       aviarySlug: 'sayyidas-cove',
       aviaryName: "Sayyida's Cove",
-      mode: 'live',
       slotCount: 2,
     });
     expect(alice.startTime).toMatch(/^14:00/);
