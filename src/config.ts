@@ -18,6 +18,15 @@ const envSchema = z.object({
   // share a registrable domain, 'none' for the documented cross-site fallback
   // (vercel.app admin + railway.app api). 'none' forces Secure.
   ADMIN_COOKIE_SAMESITE: z.enum(['lax', 'none']).default('lax'),
+  // R2 presigned uploads (Phase 3D). Deliberately OPTIONAL at boot — a missing
+  // group must degrade the upload endpoint to a clear 503, not crash the whole
+  // API (the 3A incident: a new required var only set on one Railway
+  // environment crash-looped the other). All five must be set together.
+  R2_ACCOUNT_ID: z.string().min(1).optional(),
+  R2_ACCESS_KEY_ID: z.string().min(1).optional(),
+  R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  R2_BUCKET: z.string().min(1).optional(),
+  R2_PUBLIC_BASE_URL: z.string().url().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -36,6 +45,28 @@ const allowedOrigins = [
   ...new Set([...parsed.data.ALLOWED_ORIGINS.split(','), adminAppUrl]),
 ];
 
+const r2Keys = [
+  parsed.data.R2_ACCOUNT_ID,
+  parsed.data.R2_ACCESS_KEY_ID,
+  parsed.data.R2_SECRET_ACCESS_KEY,
+  parsed.data.R2_BUCKET,
+  parsed.data.R2_PUBLIC_BASE_URL,
+];
+const r2 = r2Keys.every((v) => v !== undefined)
+  ? {
+      accountId: parsed.data.R2_ACCOUNT_ID!,
+      accessKeyId: parsed.data.R2_ACCESS_KEY_ID!,
+      secretAccessKey: parsed.data.R2_SECRET_ACCESS_KEY!,
+      bucket: parsed.data.R2_BUCKET!,
+      publicBaseUrl: parsed.data.R2_PUBLIC_BASE_URL!.replace(/\/$/, ''),
+    }
+  : null;
+if (!r2 && r2Keys.some((v) => v !== undefined)) {
+  // Loud but non-fatal: a partial group means someone set SOME of the vars —
+  // most likely a typo'd name — and uploads will 503 until it's fixed
+  console.warn('⚠️  Partial R2_* configuration ignored — set all five R2 vars or none');
+}
+
 export const config = {
   port: parseInt(parsed.data.PORT, 10),
   host: parsed.data.HOST,
@@ -47,4 +78,5 @@ export const config = {
   adminCookieSameSite: parsed.data.ADMIN_COOKIE_SAMESITE,
   adminCookieSecure:
     parsed.data.ADMIN_COOKIE_SAMESITE === 'none' || process.env.NODE_ENV === 'production',
+  r2,
 } as const;

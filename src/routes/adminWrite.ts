@@ -14,6 +14,7 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
+import { config } from '../config.js';
 import { pool, query, withTransaction } from '../db/index.js';
 import { isoDate } from '../utils/isoDate.js';
 import { sanitizeSheetName } from '../services/excel.js';
@@ -106,23 +107,62 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/aviaries', async (request, reply) => {
     const parsed = z
-      .object({ slug: slugSchema, name: labelSchema })
+      .object({ slug: slugSchema, name: labelSchema, cloneFrom: slugSchema.optional() })
       .safeParse(request.body);
     if (!parsed.success) {
       return fail(reply, 400, 'An aviary needs a slug (lowercase-with-hyphens) and a name');
     }
-    const { slug, name } = parsed.data;
+    const { slug, name, cloneFrom } = parsed.data;
 
+    // Clone template (3D wizard, design §5 step 2): the new aviary starts
+    // from an existing aviary's ACTIVE perches and vocabulary enablement.
+    // Subjects and diagrams are aviary-specific and never cloned.
+    let source: { id: string; slug: string } | null = null;
+    if (cloneFrom) {
+      source = await aviaryBySlug(cloneFrom);
+      if (!source) return fail(reply, 400, `Unknown aviary "${cloneFrom}" to clone from`);
+    }
+
+    let cloned = { perches: 0, behaviors: 0, options: 0 };
     try {
       await withTransaction(async (client) => {
-        await client.query(`INSERT INTO aviaries (slug, name) VALUES ($1, $2)`, [slug, name]);
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO aviaries (slug, name) VALUES ($1, $2) RETURNING id`,
+          [slug, name]
+        );
+        const aviaryId = inserted.rows[0]!.id;
+
+        if (source) {
+          const perches = await client.query(
+            `INSERT INTO perches (aviary_id, value, label, perch_group, sort_order)
+             SELECT $1, value, label, perch_group, sort_order
+             FROM perches WHERE aviary_id = $2 AND retired_at IS NULL`,
+            [aviaryId, source.id]
+          );
+          const behaviors = await client.query(
+            `INSERT INTO aviary_behaviors (aviary_id, behavior_id)
+             SELECT $1, behavior_id FROM aviary_behaviors WHERE aviary_id = $2`,
+            [aviaryId, source.id]
+          );
+          const options = await client.query(
+            `INSERT INTO aviary_vocab_options (aviary_id, vocab_option_id)
+             SELECT $1, vocab_option_id FROM aviary_vocab_options WHERE aviary_id = $2`,
+            [aviaryId, source.id]
+          );
+          cloned = {
+            perches: perches.rowCount ?? 0,
+            behaviors: behaviors.rowCount ?? 0,
+            options: options.rowCount ?? 0,
+          };
+        }
+
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
             action: 'create',
             entity: 'aviary',
             entityId: slug,
-            detail: { name },
+            detail: cloneFrom ? { name, cloneFrom, ...cloned } : { name },
           },
           client
         );
@@ -133,7 +173,7 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       }
       throw error;
     }
-    return reply.status(201).send({ success: true, data: { slug, name } });
+    return reply.status(201).send({ success: true, data: { slug, name, cloned } });
   });
 
   app.patch<{ Params: { slug: string } }>('/aviaries/:slug', async (request, reply) => {
@@ -346,6 +386,79 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(200).send({ success: true, data: { value: request.params.value } });
     }
   );
+
+  // ===========================================================================
+  // PERCH DIAGRAMS (replace-set — the diagram manager submits the whole list)
+  // ===========================================================================
+
+  app.put<{ Params: { slug: string } }>('/aviaries/:slug/diagrams', async (request, reply) => {
+    const parsed = z
+      .object({
+        diagrams: z
+          .array(
+            z.object({
+              url: z.string().url().max(500),
+              label: labelSchema,
+            })
+          )
+          .max(12),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return fail(reply, 400, 'Provide diagrams as an array of { url, label } (max 12)');
+    }
+    const { diagrams } = parsed.data;
+
+    const aviary = await aviaryBySlug(request.params.slug);
+    if (!aviary) return fail(reply, 404, 'Unknown aviary');
+
+    const labels = diagrams.map((d) => d.label.toLowerCase());
+    if (new Set(labels).size !== labels.length) {
+      return fail(reply, 400, 'Diagram labels must be unique');
+    }
+
+    // URL guardrail: uploads live under the R2 public base. When R2 is not
+    // configured, only URLs already on this aviary pass (relabel/reorder/
+    // remove still work; introducing new URLs needs the upload flow).
+    const current = await query<{ url: string }>(
+      `SELECT url FROM aviary_perch_diagrams WHERE aviary_id = $1`,
+      [aviary.id]
+    );
+    const currentUrls = new Set(current.rows.map((r) => r.url));
+    const base = config.r2?.publicBaseUrl;
+    for (const diagram of diagrams) {
+      const allowed = currentUrls.has(diagram.url) || (base && diagram.url.startsWith(`${base}/`));
+      if (!allowed) {
+        return fail(
+          reply,
+          400,
+          `Diagram URLs must come from the upload flow (${base ?? 'uploads are not configured'}) — "${diagram.url}" doesn't qualify`
+        );
+      }
+    }
+
+    await withTransaction(async (client) => {
+      await client.query(`DELETE FROM aviary_perch_diagrams WHERE aviary_id = $1`, [aviary.id]);
+      for (const [index, diagram] of diagrams.entries()) {
+        await client.query(
+          `INSERT INTO aviary_perch_diagrams (aviary_id, url, label, sort_order)
+           VALUES ($1, $2, $3, $4)`,
+          [aviary.id, diagram.url, diagram.label, index + 1]
+        );
+      }
+      await recordAudit(
+        {
+          adminUserId: request.adminUser!.id,
+          action: 'set_diagrams',
+          entity: 'aviary',
+          entityId: aviary.slug,
+          detail: { labels: diagrams.map((d) => d.label) },
+        },
+        client
+      );
+    });
+    return reply.status(200).send({ success: true, data: { count: diagrams.length } });
+  });
 
   // ===========================================================================
   // SUBJECTS (residency episodes)

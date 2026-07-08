@@ -23,23 +23,16 @@ function authed(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payloa
   });
 }
 
-/** Remove everything this file may have created (also swept in beforeAll). */
+/** Remove everything this file may have created (also swept in beforeAll).
+ * Covers every wtest-* aviary (the clone tests create wtest-clone). */
 async function sweep(): Promise<void> {
-  await query(
-    `DELETE FROM aviary_behaviors WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`,
-    [AVIARY]
-  );
-  await query(
-    `DELETE FROM aviary_vocab_options WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`,
-    [AVIARY]
-  );
-  await query(`DELETE FROM subjects WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`, [
-    AVIARY,
-  ]);
-  await query(`DELETE FROM perches WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`, [
-    AVIARY,
-  ]);
-  await query(`DELETE FROM aviaries WHERE slug = $1`, [AVIARY]);
+  const owned = `(SELECT id FROM aviaries WHERE slug LIKE 'wtest-%')`;
+  await query(`DELETE FROM aviary_behaviors WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM aviary_vocab_options WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM aviary_perch_diagrams WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM subjects WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM perches WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM aviaries WHERE slug LIKE 'wtest-%'`);
   await query(`DELETE FROM behaviors WHERE value LIKE 'wtest_%'`);
   await query(`DELETE FROM behavior_groups WHERE name LIKE 'WTest%'`);
   await query(`DELETE FROM vocab_options WHERE value LIKE 'wtest_%'`);
@@ -132,6 +125,46 @@ describe('aviaries', () => {
     expect(response.statusCode).toBe(400);
   });
 
+  it('clones perches and enablement (not subjects, not diagrams) from a template', async () => {
+    const created = await authed('POST', '/api/admin/aviaries', {
+      slug: 'wtest-clone',
+      name: 'WTest Clone',
+      cloneFrom: 'sayyidas-cove',
+    });
+    expect(created.statusCode).toBe(201);
+    const { cloned } = created.json().data;
+
+    // Active perches only — the retired old-format specials don't propagate
+    const sourceActive = (
+      await query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM perches p JOIN aviaries a ON a.id = p.aviary_id
+         WHERE a.slug = 'sayyidas-cove' AND p.retired_at IS NULL`
+      )
+    ).rows[0]!.count;
+    expect(String(cloned.perches)).toBe(sourceActive);
+    expect(cloned.behaviors).toBeGreaterThan(0);
+    expect(cloned.options).toBeGreaterThan(0);
+
+    const clone = await query<{ perches: string; subjects: string; diagrams: string }>(
+      `SELECT
+         (SELECT COUNT(*)::text FROM perches WHERE aviary_id = a.id) AS perches,
+         (SELECT COUNT(*)::text FROM subjects WHERE aviary_id = a.id) AS subjects,
+         (SELECT COUNT(*)::text FROM aviary_perch_diagrams WHERE aviary_id = a.id) AS diagrams
+       FROM aviaries a WHERE a.slug = 'wtest-clone'`
+    );
+    expect(clone.rows[0]).toEqual({ perches: sourceActive, subjects: '0', diagrams: '0' });
+  });
+
+  it('rejects cloning from an unknown aviary', async () => {
+    const response = await authed('POST', '/api/admin/aviaries', {
+      slug: 'wtest-clone-2',
+      name: 'WTest Clone 2',
+      cloneFrom: 'nowhere',
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatch(/clone from/);
+  });
+
   it('updates name and active flag; 404s unknown slugs', async () => {
     const updated = await authed('PATCH', `/api/admin/aviaries/${AVIARY}`, {
       name: 'WTest Aviary Renamed',
@@ -222,6 +255,70 @@ describe('perches', () => {
     const refused = await authed('DELETE', '/api/admin/aviaries/sayyidas-cove/perches/12');
     expect(refused.statusCode).toBe(409);
     expect(refused.json().error).toMatch(/retire it instead/);
+  });
+});
+
+describe('perch diagrams (replace-set)', () => {
+  // vitest.config.ts injects R2_PUBLIC_BASE_URL=https://pub-test.r2.dev
+  const D1 = 'https://pub-test.r2.dev/perch-diagram-wtest-aviary-north-v1.webp';
+  const D2 = 'https://pub-test.r2.dev/perch-diagram-wtest-aviary-south-v1.webp';
+
+  it('replaces the set in submitted order', async () => {
+    const first = await authed('PUT', `/api/admin/aviaries/${AVIARY}/diagrams`, {
+      diagrams: [
+        { url: D1, label: 'North' },
+        { url: D2, label: 'South' },
+      ],
+    });
+    expect(first.statusCode).toBe(200);
+
+    // Reorder + relabel + drop one in a single replace
+    const second = await authed('PUT', `/api/admin/aviaries/${AVIARY}/diagrams`, {
+      diagrams: [{ url: D2, label: 'South (main)' }],
+    });
+    expect(second.statusCode).toBe(200);
+
+    const rows = await query<{ url: string; label: string; sort_order: number }>(
+      `SELECT d.url, d.label, d.sort_order FROM aviary_perch_diagrams d
+       JOIN aviaries a ON a.id = d.aviary_id WHERE a.slug = $1 ORDER BY d.sort_order`,
+      [AVIARY]
+    );
+    expect(rows.rows).toEqual([{ url: D2, label: 'South (main)', sort_order: 1 }]);
+  });
+
+  it('rejects duplicate labels and URLs outside the upload base', async () => {
+    const dupes = await authed('PUT', `/api/admin/aviaries/${AVIARY}/diagrams`, {
+      diagrams: [
+        { url: D1, label: 'North' },
+        { url: D2, label: 'north' },
+      ],
+    });
+    expect(dupes.statusCode).toBe(400);
+    expect(dupes.json().error).toMatch(/unique/);
+
+    const foreign = await authed('PUT', `/api/admin/aviaries/${AVIARY}/diagrams`, {
+      diagrams: [{ url: 'https://elsewhere.example/x.webp', label: 'X' }],
+    });
+    expect(foreign.statusCode).toBe(400);
+    expect(foreign.json().error).toMatch(/upload flow/);
+  });
+
+  it("keeps an already-current URL editable even if it predates the upload base", async () => {
+    // Simulate a legacy row (different base) already on the aviary
+    const legacy = 'https://pub-old.r2.dev/perch-diagram-wtest-aviary-legacy-v1.webp';
+    const aviaryId = (
+      await query<{ id: string }>(`SELECT id FROM aviaries WHERE slug = $1`, [AVIARY])
+    ).rows[0]!.id;
+    await query(
+      `INSERT INTO aviary_perch_diagrams (aviary_id, url, label, sort_order)
+       VALUES ($1, $2, 'Legacy', 50)`,
+      [aviaryId, legacy]
+    );
+
+    const relabel = await authed('PUT', `/api/admin/aviaries/${AVIARY}/diagrams`, {
+      diagrams: [{ url: legacy, label: 'Legacy (kept)' }],
+    });
+    expect(relabel.statusCode).toBe(200);
   });
 });
 
@@ -641,6 +738,7 @@ describe('audit trail (P3-D5)', () => {
       'update:vocab_option',
       'delete:vocab_option',
       'set_enablement:aviary',
+      'set_diagrams:aviary',
     ]) {
       expect(have.has(expected), `missing audit row for ${expected}`).toBe(true);
     }
