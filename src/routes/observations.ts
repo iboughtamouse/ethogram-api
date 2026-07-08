@@ -10,6 +10,7 @@ import {
 import { sendObservationEmail } from '../services/email.js';
 import { checkRateLimit } from '../utils/rateLimit.js';
 import { sanitizeFilename } from '../utils/sanitize.js';
+import { GENERIC_SUBJECT_IDS } from '../constants.js';
 
 // Rate limit config for share endpoint: 3 requests per observation per hour
 const SHARE_RATE_LIMIT = {
@@ -259,11 +260,8 @@ export async function resolveAviary(
   return result.rows[0] ?? null;
 }
 
-// Generic (unidentified) subject labels the form may send instead of a name
-// (P2-D8): most observers cannot tell juveniles apart, so identification is
-// optional. These are wire-contract literals, not subjects rows — always
-// exempt from the residency check.
-const GENERIC_SUBJECT_IDS = new Set(['Juvenile']);
+// Generic (unidentified) subject labels (P2-D8) live in src/constants.ts —
+// the admin API (Phase 3) also needs them to reject reserved subject names.
 
 /**
  * Names in subjectNames with no residency episode covering the observation

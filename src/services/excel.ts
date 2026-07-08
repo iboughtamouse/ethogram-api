@@ -207,7 +207,7 @@ const stripSheetNameBoundary = (name: string): string =>
  * sheet's Subject(s) header row. Boundary stripping runs AFTER truncation —
  * the slice can re-expose a boundary apostrophe.
  */
-function sanitizeSheetName(name: string): string {
+export function sanitizeSheetName(name: string): string {
   const cleaned = name
     .replace(/[*?:\\/[\]]/g, ' ')
     .replace(/\s+/g, ' ')
