@@ -1,46 +1,58 @@
 /**
- * Admin write endpoints (Phase 3 stage 3C): CRUD over the Phase 1 editing
- * tables. The editing tables ARE the draft — nothing observers see changes
- * until POST /config/publish (adminConfig.ts).
+ * Admin write endpoints (Phase 3 stages 3C + 3D): CRUD over the Phase 1
+ * editing tables plus the 3D diagram replace-set and clone-from-template
+ * aviary creation. The editing tables ARE the draft — nothing observers see
+ * changes until POST /config/publish (adminConfig.ts).
  *
  * Registered inside admin.ts's session-guarded scope. Guardrail hierarchy
  * (design §3): these endpoints enforce LOCAL rules — reserved subject names
  * (P2-D8), Excel sheet-name round-trip, wire values immutable (no rename
  * endpoints exist), deletes only for never-published entities, friendly
- * episode-overlap errors. Publish enforces the GLOBAL append-only invariants.
+ * episode-overlap errors, diagram URLs restricted to genuinely-minted uploads,
+ * new aviaries created inactive (so a half-built one can't ride a publish into
+ * the observer form). Publish enforces the GLOBAL append-only invariants.
  * Every mutation writes an audit row (P3-D5).
  */
 
-import type { FastifyPluginAsync, FastifyReply } from 'fastify';
-import type { Pool, PoolClient } from 'pg';
-import { z } from 'zod';
-import { config } from '../config.js';
-import { pool, query, withTransaction } from '../db/index.js';
-import { isoDate } from '../utils/isoDate.js';
-import { sanitizeSheetName } from '../services/excel.js';
-import { GENERIC_SUBJECT_IDS } from '../constants.js';
-import { recordAudit } from '../services/audit.js';
+import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import type { Pool, PoolClient } from "pg";
+import { z } from "zod";
+import { config } from "../config.js";
+import { pool, query, withTransaction } from "../db/index.js";
+import { isoDate } from "../utils/isoDate.js";
+import { sanitizeSheetName } from "../services/excel.js";
+import { GENERIC_SUBJECT_IDS } from "../constants.js";
+import { recordAudit } from "../services/audit.js";
 
-const VOCAB_KINDS = ['object', 'object_interaction', 'animal', 'animal_interaction'] as const;
+const VOCAB_KINDS = [
+  "object",
+  "object_interaction",
+  "animal",
+  "animal_interaction",
+] as const;
 
 // Editing-table kind → composed-document key (for published-containment checks)
 const KIND_TO_DOC_KEY: Record<(typeof VOCAB_KINDS)[number], string> = {
-  object: 'objects',
-  object_interaction: 'objectInteractionTypes',
-  animal: 'animals',
-  animal_interaction: 'animalInteractionTypes',
+  object: "objects",
+  object_interaction: "objectInteractionTypes",
+  animal: "animals",
+  animal_interaction: "animalInteractionTypes",
 };
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const slugSchema = z
   .string()
-  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'lowercase letters, digits, and hyphens')
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "lowercase letters, digits, and hyphens")
   .max(100);
 const labelSchema = z.string().trim().min(1).max(255);
 const wireValueSchema = z
   .string()
-  .regex(/^[a-z0-9][a-z0-9_-]*$/, 'lowercase letters, digits, underscores, hyphens')
+  .regex(
+    /^[a-z0-9][a-z0-9_-]*$/,
+    "lowercase letters, digits, underscores, hyphens",
+  )
   .max(100);
 // Postgres INTEGER bounds — z.number().int() alone admits values up to 2^53,
 // which the int4 columns reject with an unhandled overflow (a 500)
@@ -48,7 +60,8 @@ const sortOrderSchema = z.number().int().min(-2147483648).max(2147483647);
 // Control (Cc) and invisible formatting (Cf) characters survive trim() and
 // the Excel sheet-name rules, producing names that render identically to a
 // different string (e.g. a zero-width space inside "Juvenile")
-const hasInvisibleChars = (value: string): boolean => /[\p{Cc}\p{Cf}]/u.test(value);
+const hasInvisibleChars = (value: string): boolean =>
+  /[\p{Cc}\p{Cf}]/u.test(value);
 // Perch values become URL path segments for PATCH/DELETE: '.' and '..' are
 // swallowed by path normalization and raw slashes split the segment, leaving
 // the perch uneditable once created
@@ -59,22 +72,29 @@ const perchValueSchema = z
   .max(20)
   .refine(
     (value) =>
-      value !== '.' && value !== '..' && !/[/\\]/.test(value) && !hasInvisibleChars(value),
-    'no slashes, control characters, or "." / ".."'
+      value !== "." &&
+      value !== ".." &&
+      !/[/\\]/.test(value) &&
+      !hasInvisibleChars(value),
+    'no slashes, control characters, or "." / ".."',
   );
 
 function isPgError(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: string }).code === code;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: string }).code === code
+  );
 }
 
 /** True if any published version's document contains the given fragment. */
 async function everPublished(
   fragment: unknown,
-  client: Pool | PoolClient = pool
+  client: Pool | PoolClient = pool,
 ): Promise<boolean> {
   const result = await client.query(
     `SELECT 1 FROM config_versions WHERE config @> $1::jsonb LIMIT 1`,
-    [JSON.stringify(fragment)]
+    [JSON.stringify(fragment)],
   );
   return result.rows.length > 0;
 }
@@ -85,13 +105,17 @@ async function everPublished(
  * guard can't race a publish that captures the row between check and delete.
  */
 async function lockAgainstPublish(client: PoolClient): Promise<void> {
-  await client.query(`SELECT pg_advisory_xact_lock(hashtext('ethogram-config-publish'))`);
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext('ethogram-config-publish'))`,
+  );
 }
 
-async function aviaryBySlug(slug: string): Promise<{ id: string; slug: string } | null> {
+async function aviaryBySlug(
+  slug: string,
+): Promise<{ id: string; slug: string } | null> {
   const result = await query<{ id: string; slug: string }>(
     `SELECT id, slug FROM aviaries WHERE slug = $1`,
-    [slug]
+    [slug],
   );
   return result.rows[0] ?? null;
 }
@@ -105,12 +129,20 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
   // AVIARIES
   // ===========================================================================
 
-  app.post('/aviaries', async (request, reply) => {
+  app.post("/aviaries", async (request, reply) => {
     const parsed = z
-      .object({ slug: slugSchema, name: labelSchema, cloneFrom: slugSchema.optional() })
+      .object({
+        slug: slugSchema,
+        name: labelSchema,
+        cloneFrom: slugSchema.optional(),
+      })
       .safeParse(request.body);
     if (!parsed.success) {
-      return fail(reply, 400, 'An aviary needs a slug (lowercase-with-hyphens) and a name');
+      return fail(
+        reply,
+        400,
+        "An aviary needs a slug (lowercase-with-hyphens) and a name",
+      );
     }
     const { slug, name, cloneFrom } = parsed.data;
 
@@ -120,15 +152,23 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     let source: { id: string; slug: string } | null = null;
     if (cloneFrom) {
       source = await aviaryBySlug(cloneFrom);
-      if (!source) return fail(reply, 400, `Unknown aviary "${cloneFrom}" to clone from`);
+      if (!source)
+        return fail(reply, 400, `Unknown aviary "${cloneFrom}" to clone from`);
     }
 
     let cloned = { perches: 0, behaviors: 0, options: 0 };
     try {
       await withTransaction(async (client) => {
+        // New aviaries start INACTIVE. compose_config() includes every aviary
+        // and the publish gate is global, so an active half-built aviary would
+        // ride the next publish (even an unrelated one) into the form's picker.
+        // The form filters to active aviaries, so an inactive draft stays
+        // invisible to observers until the admin activates it as the final,
+        // deliberate step. Append-only is unaffected — activating later is a
+        // clean forward change the publish diff shows.
         const inserted = await client.query<{ id: string }>(
-          `INSERT INTO aviaries (slug, name) VALUES ($1, $2) RETURNING id`,
-          [slug, name]
+          `INSERT INTO aviaries (slug, name, is_active) VALUES ($1, $2, false) RETURNING id`,
+          [slug, name],
         );
         const aviaryId = inserted.rows[0]!.id;
 
@@ -137,17 +177,17 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
             `INSERT INTO perches (aviary_id, value, label, perch_group, sort_order)
              SELECT $1, value, label, perch_group, sort_order
              FROM perches WHERE aviary_id = $2 AND retired_at IS NULL`,
-            [aviaryId, source.id]
+            [aviaryId, source.id],
           );
           const behaviors = await client.query(
             `INSERT INTO aviary_behaviors (aviary_id, behavior_id)
              SELECT $1, behavior_id FROM aviary_behaviors WHERE aviary_id = $2`,
-            [aviaryId, source.id]
+            [aviaryId, source.id],
           );
           const options = await client.query(
             `INSERT INTO aviary_vocab_options (aviary_id, vocab_option_id)
              SELECT $1, vocab_option_id FROM aviary_vocab_options WHERE aviary_id = $2`,
-            [aviaryId, source.id]
+            [aviaryId, source.id],
           );
           cloned = {
             perches: perches.rowCount ?? 0,
@@ -159,127 +199,157 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'create',
-            entity: 'aviary',
+            action: "create",
+            entity: "aviary",
             entityId: slug,
             detail: cloneFrom ? { name, cloneFrom, ...cloned } : { name },
           },
-          client
+          client,
         );
       });
     } catch (error) {
-      if (isPgError(error, '23505')) {
-        return fail(reply, 409, 'An aviary with that slug or name already exists');
+      if (isPgError(error, "23505")) {
+        return fail(
+          reply,
+          409,
+          "An aviary with that slug or name already exists",
+        );
       }
       throw error;
     }
-    return reply.status(201).send({ success: true, data: { slug, name, cloned } });
+    return reply
+      .status(201)
+      .send({ success: true, data: { slug, name, isActive: false, cloned } });
   });
 
-  app.patch<{ Params: { slug: string } }>('/aviaries/:slug', async (request, reply) => {
-    const parsed = z
-      .object({ name: labelSchema.optional(), isActive: z.boolean().optional() })
-      .refine((body) => body.name !== undefined || body.isActive !== undefined)
-      .safeParse(request.body);
-    if (!parsed.success) {
-      return fail(reply, 400, 'Provide a new name and/or isActive');
-    }
+  app.patch<{ Params: { slug: string } }>(
+    "/aviaries/:slug",
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          name: labelSchema.optional(),
+          isActive: z.boolean().optional(),
+        })
+        .refine(
+          (body) => body.name !== undefined || body.isActive !== undefined,
+        )
+        .safeParse(request.body);
+      if (!parsed.success) {
+        return fail(reply, 400, "Provide a new name and/or isActive");
+      }
 
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    if (parsed.data.name !== undefined) {
-      params.push(parsed.data.name);
-      sets.push(`name = $${params.length}`);
-    }
-    if (parsed.data.isActive !== undefined) {
-      params.push(parsed.data.isActive);
-      sets.push(`is_active = $${params.length}`);
-    }
-    params.push(request.params.slug);
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (parsed.data.name !== undefined) {
+        params.push(parsed.data.name);
+        sets.push(`name = $${params.length}`);
+      }
+      if (parsed.data.isActive !== undefined) {
+        params.push(parsed.data.isActive);
+        sets.push(`is_active = $${params.length}`);
+      }
+      params.push(request.params.slug);
 
-    let updated;
-    try {
-      updated = await withTransaction(async (client) => {
-        const result = await client.query<{ slug: string; name: string; isActive: boolean }>(
-          `UPDATE aviaries SET ${sets.join(', ')}
+      let updated;
+      try {
+        updated = await withTransaction(async (client) => {
+          const result = await client.query<{
+            slug: string;
+            name: string;
+            isActive: boolean;
+          }>(
+            `UPDATE aviaries SET ${sets.join(", ")}
            WHERE slug = $${params.length}
            RETURNING slug, name, is_active AS "isActive"`,
-          params
-        );
-        if (result.rows[0]) {
-          await recordAudit(
-            {
-              adminUserId: request.adminUser!.id,
-              action: 'update',
-              entity: 'aviary',
-              entityId: request.params.slug,
-              detail: parsed.data,
-            },
-            client
+            params,
           );
+          if (result.rows[0]) {
+            await recordAudit(
+              {
+                adminUserId: request.adminUser!.id,
+                action: "update",
+                entity: "aviary",
+                entityId: request.params.slug,
+                detail: parsed.data,
+              },
+              client,
+            );
+          }
+          return result;
+        });
+      } catch (error) {
+        if (isPgError(error, "23505")) {
+          return fail(reply, 409, "Another aviary already has that name");
         }
-        return result;
-      });
-    } catch (error) {
-      if (isPgError(error, '23505')) {
-        return fail(reply, 409, 'Another aviary already has that name');
+        throw error;
       }
-      throw error;
-    }
-    if (!updated.rows[0]) return fail(reply, 404, 'Unknown aviary');
+      if (!updated.rows[0]) return fail(reply, 404, "Unknown aviary");
 
-    return reply.status(200).send({ success: true, data: updated.rows[0] });
-  });
+      return reply.status(200).send({ success: true, data: updated.rows[0] });
+    },
+  );
 
   // ===========================================================================
   // PERCHES
   // ===========================================================================
 
-  app.post<{ Params: { slug: string } }>('/aviaries/:slug/perches', async (request, reply) => {
-    const parsed = z
-      .object({
-        value: perchValueSchema,
-        label: labelSchema,
-        group: z.string().trim().min(1).max(100).nullish(),
-        sortOrder: sortOrderSchema.optional(),
-      })
-      .safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'A perch needs a value (max 20 chars) and a label');
+  app.post<{ Params: { slug: string } }>(
+    "/aviaries/:slug/perches",
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          value: perchValueSchema,
+          label: labelSchema,
+          group: z.string().trim().min(1).max(100).nullish(),
+          sortOrder: sortOrderSchema.optional(),
+        })
+        .safeParse(request.body);
+      if (!parsed.success)
+        return fail(
+          reply,
+          400,
+          "A perch needs a value (max 20 chars) and a label",
+        );
 
-    const aviary = await aviaryBySlug(request.params.slug);
-    if (!aviary) return fail(reply, 404, 'Unknown aviary');
-    const { value, label, group, sortOrder } = parsed.data;
+      const aviary = await aviaryBySlug(request.params.slug);
+      if (!aviary) return fail(reply, 404, "Unknown aviary");
+      const { value, label, group, sortOrder } = parsed.data;
 
-    try {
-      await withTransaction(async (client) => {
-        await client.query(
-          `INSERT INTO perches (aviary_id, value, label, perch_group, sort_order)
+      try {
+        await withTransaction(async (client) => {
+          await client.query(
+            `INSERT INTO perches (aviary_id, value, label, perch_group, sort_order)
            VALUES ($1, $2, $3, $4,
                    COALESCE($5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM perches WHERE aviary_id = $1)))`,
-          [aviary.id, value, label, group ?? null, sortOrder ?? null]
-        );
-        await recordAudit(
-          {
-            adminUserId: request.adminUser!.id,
-            action: 'create',
-            entity: 'perch',
-            entityId: `${aviary.slug}/${value}`,
-            detail: { label, group: group ?? null },
-          },
-          client
-        );
-      });
-    } catch (error) {
-      if (isPgError(error, '23505')) {
-        return fail(reply, 409, `Perch "${value}" already exists in this aviary`);
+            [aviary.id, value, label, group ?? null, sortOrder ?? null],
+          );
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: "create",
+              entity: "perch",
+              entityId: `${aviary.slug}/${value}`,
+              detail: { label, group: group ?? null },
+            },
+            client,
+          );
+        });
+      } catch (error) {
+        if (isPgError(error, "23505")) {
+          return fail(
+            reply,
+            409,
+            `Perch "${value}" already exists in this aviary`,
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
-    return reply.status(201).send({ success: true, data: { value, label } });
-  });
+      return reply.status(201).send({ success: true, data: { value, label } });
+    },
+  );
 
   app.patch<{ Params: { slug: string; value: string } }>(
-    '/aviaries/:slug/perches/:value',
+    "/aviaries/:slug/perches/:value",
     async (request, reply) => {
       const parsed = z
         .object({
@@ -290,10 +360,10 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         })
         .refine((body) => Object.values(body).some((v) => v !== undefined))
         .safeParse(request.body);
-      if (!parsed.success) return fail(reply, 400, 'Nothing to update');
+      if (!parsed.success) return fail(reply, 400, "Nothing to update");
 
       const aviary = await aviaryBySlug(request.params.slug);
-      if (!aviary) return fail(reply, 404, 'Unknown aviary');
+      if (!aviary) return fail(reply, 404, "Unknown aviary");
 
       const sets: string[] = [];
       const params: unknown[] = [];
@@ -311,479 +381,627 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       }
       if (parsed.data.retired !== undefined) {
         sets.push(
-          parsed.data.retired ? `retired_at = COALESCE(retired_at, NOW())` : `retired_at = NULL`
+          parsed.data.retired
+            ? `retired_at = COALESCE(retired_at, NOW())`
+            : `retired_at = NULL`,
         );
       }
       params.push(aviary.id, request.params.value);
 
       const updated = await withTransaction(async (client) => {
         const result = await client.query(
-          `UPDATE perches SET ${sets.join(', ')}
+          `UPDATE perches SET ${sets.join(", ")}
            WHERE aviary_id = $${params.length - 1} AND value = $${params.length}
            RETURNING value`,
-          params
+          params,
         );
         if (result.rows[0]) {
           await recordAudit(
             {
               adminUserId: request.adminUser!.id,
-              action: 'update',
-              entity: 'perch',
+              action: "update",
+              entity: "perch",
               entityId: `${aviary.slug}/${request.params.value}`,
               detail: parsed.data,
             },
-            client
+            client,
           );
         }
         return result;
       });
-      if (!updated.rows[0]) return fail(reply, 404, 'Unknown perch');
+      if (!updated.rows[0]) return fail(reply, 404, "Unknown perch");
 
-      return reply.status(200).send({ success: true, data: { value: request.params.value } });
-    }
+      return reply
+        .status(200)
+        .send({ success: true, data: { value: request.params.value } });
+    },
   );
 
   app.delete<{ Params: { slug: string; value: string } }>(
-    '/aviaries/:slug/perches/:value',
+    "/aviaries/:slug/perches/:value",
     async (request, reply) => {
       const aviary = await aviaryBySlug(request.params.slug);
-      if (!aviary) return fail(reply, 404, 'Unknown aviary');
+      if (!aviary) return fail(reply, 404, "Unknown aviary");
 
       const outcome = await withTransaction(async (client) => {
         await lockAgainstPublish(client);
         const published = await everPublished(
-          { aviaries: [{ slug: aviary.slug, perches: [{ value: request.params.value }] }] },
-          client
+          {
+            aviaries: [
+              { slug: aviary.slug, perches: [{ value: request.params.value }] },
+            ],
+          },
+          client,
         );
-        if (published) return 'published' as const;
+        if (published) return "published" as const;
 
         const deleted = await client.query(
           `DELETE FROM perches WHERE aviary_id = $1 AND value = $2 RETURNING value`,
-          [aviary.id, request.params.value]
+          [aviary.id, request.params.value],
         );
-        if (!deleted.rows[0]) return 'missing' as const;
+        if (!deleted.rows[0]) return "missing" as const;
 
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'delete',
-            entity: 'perch',
+            action: "delete",
+            entity: "perch",
             entityId: `${aviary.slug}/${request.params.value}`,
           },
-          client
+          client,
         );
-        return 'deleted' as const;
+        return "deleted" as const;
       });
 
-      if (outcome === 'published') {
+      if (outcome === "published") {
         return fail(
           reply,
           409,
-          'This perch appears in a published config version and cannot be deleted — retire it instead'
+          "This perch appears in a published config version and cannot be deleted — retire it instead",
         );
       }
-      if (outcome === 'missing') return fail(reply, 404, 'Unknown perch');
-      return reply.status(200).send({ success: true, data: { value: request.params.value } });
-    }
+      if (outcome === "missing") return fail(reply, 404, "Unknown perch");
+      return reply
+        .status(200)
+        .send({ success: true, data: { value: request.params.value } });
+    },
   );
 
   // ===========================================================================
   // PERCH DIAGRAMS (replace-set — the diagram manager submits the whole list)
   // ===========================================================================
 
-  app.put<{ Params: { slug: string } }>('/aviaries/:slug/diagrams', async (request, reply) => {
-    const parsed = z
-      .object({
-        diagrams: z
-          .array(
-            z.object({
-              url: z.string().url().max(500),
-              label: labelSchema,
-            })
-          )
-          .max(12),
-      })
-      .safeParse(request.body);
-    if (!parsed.success) {
-      return fail(reply, 400, 'Provide diagrams as an array of { url, label } (max 12)');
-    }
-    const { diagrams } = parsed.data;
-
-    const aviary = await aviaryBySlug(request.params.slug);
-    if (!aviary) return fail(reply, 404, 'Unknown aviary');
-
-    const labels = diagrams.map((d) => d.label.toLowerCase());
-    if (new Set(labels).size !== labels.length) {
-      return fail(reply, 400, 'Diagram labels must be unique');
-    }
-
-    // URL guardrail: uploads live under the R2 public base. When R2 is not
-    // configured, only URLs already on this aviary pass (relabel/reorder/
-    // remove still work; introducing new URLs needs the upload flow).
-    const current = await query<{ url: string }>(
-      `SELECT url FROM aviary_perch_diagrams WHERE aviary_id = $1`,
-      [aviary.id]
-    );
-    const currentUrls = new Set(current.rows.map((r) => r.url));
-    const base = config.r2?.publicBaseUrl;
-    for (const diagram of diagrams) {
-      const allowed = currentUrls.has(diagram.url) || (base && diagram.url.startsWith(`${base}/`));
-      if (!allowed) {
+  app.put<{ Params: { slug: string } }>(
+    "/aviaries/:slug/diagrams",
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          diagrams: z
+            .array(
+              z.object({
+                url: z.string().url().max(500),
+                // Invisible/format chars survive trim() and render as blank or
+                // visually-duplicate tabs in the observer's perch modal — reject
+                // them like subject names do
+                label: labelSchema.refine(
+                  (value) => !hasInvisibleChars(value),
+                  "no control or invisible formatting characters",
+                ),
+              }),
+            )
+            .max(12),
+        })
+        .safeParse(request.body);
+      if (!parsed.success) {
         return fail(
           reply,
           400,
-          `Diagram URLs must come from the upload flow (${base ?? 'uploads are not configured'}) — "${diagram.url}" doesn't qualify`
+          "Provide diagrams as an array of { url, label } (max 12)",
         );
       }
-    }
+      const { diagrams } = parsed.data;
 
-    await withTransaction(async (client) => {
-      await client.query(`DELETE FROM aviary_perch_diagrams WHERE aviary_id = $1`, [aviary.id]);
-      for (const [index, diagram] of diagrams.entries()) {
-        await client.query(
-          `INSERT INTO aviary_perch_diagrams (aviary_id, url, label, sort_order)
-           VALUES ($1, $2, $3, $4)`,
-          [aviary.id, diagram.url, diagram.label, index + 1]
-        );
+      const labels = diagrams.map((d) => d.label.toLowerCase());
+      if (new Set(labels).size !== labels.length) {
+        return fail(reply, 400, "Diagram labels must be unique");
       }
-      await recordAudit(
-        {
-          adminUserId: request.adminUser!.id,
-          action: 'set_diagrams',
-          entity: 'aviary',
-          entityId: aviary.slug,
-          detail: { labels: diagrams.map((d) => d.label) },
-        },
-        client
-      );
-    });
-    return reply.status(200).send({ success: true, data: { count: diagrams.length } });
-  });
+
+      const slug = request.params.slug;
+      const base = config.r2?.publicBaseUrl;
+      // A URL beyond those already on the aviary is only accepted if it was
+      // genuinely minted here: it must live under the R2 base with the versioned
+      // key grammar AND have a matching mint_upload_url audit row for this
+      // aviary. That closes the gap where any string under the base — a typo, a
+      // failed upload's URL, another aviary's key — could be frozen into history.
+      const mintedKeyOf = (url: string): string | null => {
+        if (!base || !url.startsWith(`${base}/`)) return null;
+        const key = url.slice(base.length + 1);
+        return /^perch-diagram-[a-z0-9-]+-v[1-9]\d*\.(?:webp|png|jpg)$/.test(
+          key,
+        )
+          ? key
+          : null;
+      };
+
+      const outcome = await withTransaction(async (client) => {
+        const aviary = await client.query<{ id: string; slug: string }>(
+          `SELECT id, slug FROM aviaries WHERE slug = $1`,
+          [slug],
+        );
+        if (!aviary.rows[0])
+          return { status: 404 as const, error: "Unknown aviary" };
+        const aviaryId = aviary.rows[0].id;
+
+        // Serialize per aviary so two concurrent replace-sets can't interleave
+        // their DELETE/INSERT and either 500 on the unique(label) constraint or
+        // silently merge both sets
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+          `diagrams:${slug}`,
+        ]);
+
+        const current = await client.query<{ url: string }>(
+          `SELECT url FROM aviary_perch_diagrams WHERE aviary_id = $1`,
+          [aviaryId],
+        );
+        const currentUrls = new Set(current.rows.map((r) => r.url));
+        const minted = new Set(
+          (
+            await client.query<{ entity_id: string }>(
+              `SELECT entity_id FROM audit_log
+             WHERE action = 'mint_upload_url' AND entity = 'perch_diagram' AND entity_id LIKE $1`,
+              [`${slug}/%`],
+            )
+          ).rows.map((r) => r.entity_id),
+        );
+
+        for (const diagram of diagrams) {
+          if (currentUrls.has(diagram.url)) continue; // relabel/reorder/remove of an existing row
+          const key = mintedKeyOf(diagram.url);
+          if (!key || !minted.has(`${slug}/${key}`)) {
+            return {
+              status: 400 as const,
+              error: base
+                ? `"${diagram.url}" was not uploaded through the diagram uploader — attach only images uploaded here`
+                : "Uploads are not configured on this server, so only existing diagrams can be relabeled, reordered, or removed",
+            };
+          }
+        }
+
+        await client.query(
+          `DELETE FROM aviary_perch_diagrams WHERE aviary_id = $1`,
+          [aviaryId],
+        );
+        for (const [index, diagram] of diagrams.entries()) {
+          await client.query(
+            `INSERT INTO aviary_perch_diagrams (aviary_id, url, label, sort_order)
+           VALUES ($1, $2, $3, $4)`,
+            [aviaryId, diagram.url, diagram.label, index + 1],
+          );
+        }
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: "set_diagrams",
+            entity: "aviary",
+            entityId: aviary.rows[0].slug,
+            detail: { labels: diagrams.map((d) => d.label) },
+          },
+          client,
+        );
+        return { status: 200 as const };
+      });
+
+      if (outcome.status !== 200)
+        return fail(reply, outcome.status, outcome.error);
+      return reply
+        .status(200)
+        .send({ success: true, data: { count: diagrams.length } });
+    },
+  );
 
   // ===========================================================================
   // SUBJECTS (residency episodes)
   // ===========================================================================
 
-  app.post<{ Params: { slug: string } }>('/aviaries/:slug/subjects', async (request, reply) => {
-    const parsed = z
-      .object({
-        name: z
-          .string()
-          .trim()
-          .min(1)
-          .max(255)
-          .refine(
-            (value) => !hasInvisibleChars(value),
-            'no control or invisible formatting characters'
-          ),
-        species: labelSchema,
-        type: z.enum(['foster_parent', 'juvenile', 'baby']),
-        arrivedOn: isoDate,
-      })
-      .safeParse(request.body);
-    if (!parsed.success) {
-      return fail(reply, 400, 'A subject needs a name, species, type, and arrival date');
-    }
-    const { name, species, type, arrivedOn } = parsed.data;
+  app.post<{ Params: { slug: string } }>(
+    "/aviaries/:slug/subjects",
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          name: z
+            .string()
+            .trim()
+            .min(1)
+            .max(255)
+            .refine(
+              (value) => !hasInvisibleChars(value),
+              "no control or invisible formatting characters",
+            ),
+          species: labelSchema,
+          type: z.enum(["foster_parent", "juvenile", "baby"]),
+          arrivedOn: isoDate,
+        })
+        .safeParse(request.body);
+      if (!parsed.success) {
+        return fail(
+          reply,
+          400,
+          "A subject needs a name, species, type, and arrival date",
+        );
+      }
+      const { name, species, type, arrivedOn } = parsed.data;
 
-    // P2-D8: names matching a generic wire literal would be indistinguishable
-    // from unidentified sightings (case-insensitive to avoid near-collisions)
-    const reserved = [...GENERIC_SUBJECT_IDS].some(
-      (id) => id.toLowerCase() === name.toLowerCase()
-    );
-    if (reserved) {
-      return fail(
-        reply,
-        400,
-        `"${name}" is reserved for unidentified birds and cannot be used as a subject name`
+      // P2-D8: names matching a generic wire literal would be indistinguishable
+      // from unidentified sightings (case-insensitive to avoid near-collisions)
+      const reserved = [...GENERIC_SUBJECT_IDS].some(
+        (id) => id.toLowerCase() === name.toLowerCase(),
       );
-    }
+      if (reserved) {
+        return fail(
+          reply,
+          400,
+          `"${name}" is reserved for unidentified birds and cannot be used as a subject name`,
+        );
+      }
 
-    // Names must survive the Excel sheet-name rules unchanged (design §3):
-    // no * ? : \ / [ ], max 28 chars, no boundary apostrophes, not "History"
-    if (sanitizeSheetName(name) !== name) {
-      return fail(
-        reply,
-        400,
-        `Subject names become Excel sheet names: max 28 characters, no * ? : \\ / [ ], no leading/trailing apostrophes, and not "History" — "${name}" doesn't qualify`
-      );
-    }
+      // Names must survive the Excel sheet-name rules unchanged (design §3):
+      // no * ? : \ / [ ], max 28 chars, no boundary apostrophes, not "History"
+      if (sanitizeSheetName(name) !== name) {
+        return fail(
+          reply,
+          400,
+          `Subject names become Excel sheet names: max 28 characters, no * ? : \\ / [ ], no leading/trailing apostrophes, and not "History" — "${name}" doesn't qualify`,
+        );
+      }
 
-    const aviary = await aviaryBySlug(request.params.slug);
-    if (!aviary) return fail(reply, 404, 'Unknown aviary');
+      const aviary = await aviaryBySlug(request.params.slug);
+      if (!aviary) return fail(reply, 404, "Unknown aviary");
 
-    const overlap = await query(
-      `SELECT 1 FROM subjects
+      const overlap = await query(
+        `SELECT 1 FROM subjects
        WHERE aviary_id = $1 AND name = $2
          AND daterange(arrived_on, departed_on) && daterange($3::date, NULL)`,
-      [aviary.id, name, arrivedOn]
-    );
-    if (overlap.rows[0]) {
-      return fail(
-        reply,
-        409,
-        `"${name}" already has a residency episode overlapping ${arrivedOn} — record a departure first`
+        [aviary.id, name, arrivedOn],
       );
-    }
+      if (overlap.rows[0]) {
+        return fail(
+          reply,
+          409,
+          `"${name}" already has a residency episode overlapping ${arrivedOn} — record a departure first`,
+        );
+      }
 
-    let inserted;
-    try {
-      inserted = await withTransaction(async (client) => {
-        const result = await client.query<{ id: string }>(
-          `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
+      let inserted;
+      try {
+        inserted = await withTransaction(async (client) => {
+          const result = await client.query<{ id: string }>(
+            `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
            VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-          [aviary.id, name, species, type, arrivedOn]
+            [aviary.id, name, species, type, arrivedOn],
+          );
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: "create",
+              entity: "subject",
+              entityId: result.rows[0]!.id,
+              detail: { aviary: aviary.slug, name, species, type, arrivedOn },
+            },
+            client,
+          );
+          return result;
+        });
+      } catch (error) {
+        if (isPgError(error, "23P01") || isPgError(error, "23505")) {
+          return fail(
+            reply,
+            409,
+            `"${name}" already has an overlapping residency episode`,
+          );
+        }
+        throw error;
+      }
+
+      return reply
+        .status(201)
+        .send({ success: true, data: { id: inserted.rows[0]!.id, name } });
+    },
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    "/subjects/:id",
+    async (request, reply) => {
+      if (!UUID_PATTERN.test(request.params.id))
+        return fail(reply, 404, "Unknown subject");
+      const parsed = z
+        .object({
+          species: labelSchema.optional(),
+          departedOn: isoDate.nullable().optional(),
+        })
+        .refine(
+          (body) => body.species !== undefined || body.departedOn !== undefined,
+        )
+        .safeParse(request.body);
+      if (!parsed.success)
+        return fail(reply, 400, "Provide a species and/or departure date");
+
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (parsed.data.species !== undefined) {
+        params.push(parsed.data.species);
+        sets.push(`species = $${params.length}`);
+      }
+      if (parsed.data.departedOn !== undefined) {
+        params.push(parsed.data.departedOn);
+        sets.push(`departed_on = $${params.length}`);
+      }
+      params.push(request.params.id);
+
+      let updated;
+      try {
+        updated = await withTransaction(async (client) => {
+          const result = await client.query<{ id: string; name: string }>(
+            `UPDATE subjects SET ${sets.join(", ")} WHERE id = $${params.length} RETURNING id, name`,
+            params,
+          );
+          if (result.rows[0]) {
+            await recordAudit(
+              {
+                adminUserId: request.adminUser!.id,
+                action: "update",
+                entity: "subject",
+                entityId: request.params.id,
+                detail: parsed.data,
+              },
+              client,
+            );
+          }
+          return result;
+        });
+      } catch (error) {
+        if (isPgError(error, "23514")) {
+          return fail(
+            reply,
+            400,
+            "The departure date must be after the arrival date",
+          );
+        }
+        if (isPgError(error, "23P01")) {
+          return fail(
+            reply,
+            409,
+            "That change would overlap another residency episode",
+          );
+        }
+        throw error;
+      }
+      if (!updated.rows[0]) return fail(reply, 404, "Unknown subject");
+
+      return reply.status(200).send({ success: true, data: updated.rows[0] });
+    },
+  );
+
+  // "Type change" (e.g. baby → juvenile) is one action that closes the open
+  // episode and opens a new one on the effective date (Phase 1 §2.2)
+  app.post<{ Params: { id: string } }>(
+    "/subjects/:id/change-type",
+    async (request, reply) => {
+      if (!UUID_PATTERN.test(request.params.id))
+        return fail(reply, 404, "Unknown subject");
+      const parsed = z
+        .object({
+          newType: z.enum(["foster_parent", "juvenile", "baby"]),
+          effectiveOn: isoDate,
+        })
+        .safeParse(request.body);
+      if (!parsed.success)
+        return fail(reply, 400, "Provide newType and effectiveOn");
+      const { newType, effectiveOn } = parsed.data;
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const episode = await client.query<{
+          id: string;
+          aviary_id: string;
+          name: string;
+          species: string;
+          subject_type: string;
+          arrived_on: string;
+          departed_on: string | null;
+        }>(`SELECT * FROM subjects WHERE id = $1 FOR UPDATE`, [
+          request.params.id,
+        ]);
+        const current = episode.rows[0];
+        if (!current) {
+          await client.query("ROLLBACK");
+          return fail(reply, 404, "Unknown subject");
+        }
+        if (current.departed_on !== null) {
+          await client.query("ROLLBACK");
+          return fail(
+            reply,
+            409,
+            "This episode is already closed — the bird has departed",
+          );
+        }
+        if (current.subject_type === newType) {
+          await client.query("ROLLBACK");
+          return fail(
+            reply,
+            400,
+            `This bird is already recorded as ${newType}`,
+          );
+        }
+
+        await client.query(
+          `UPDATE subjects SET departed_on = $1 WHERE id = $2`,
+          [effectiveOn, current.id],
+        );
+        const opened = await client.query<{ id: string }>(
+          `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [
+            current.aviary_id,
+            current.name,
+            current.species,
+            newType,
+            effectiveOn,
+          ],
         );
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'create',
-            entity: 'subject',
-            entityId: result.rows[0]!.id,
-            detail: { aviary: aviary.slug, name, species, type, arrivedOn },
-          },
-          client
-        );
-        return result;
-      });
-    } catch (error) {
-      if (isPgError(error, '23P01') || isPgError(error, '23505')) {
-        return fail(reply, 409, `"${name}" already has an overlapping residency episode`);
-      }
-      throw error;
-    }
-
-    return reply.status(201).send({ success: true, data: { id: inserted.rows[0]!.id, name } });
-  });
-
-  app.patch<{ Params: { id: string } }>('/subjects/:id', async (request, reply) => {
-    if (!UUID_PATTERN.test(request.params.id)) return fail(reply, 404, 'Unknown subject');
-    const parsed = z
-      .object({
-        species: labelSchema.optional(),
-        departedOn: isoDate.nullable().optional(),
-      })
-      .refine((body) => body.species !== undefined || body.departedOn !== undefined)
-      .safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'Provide a species and/or departure date');
-
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    if (parsed.data.species !== undefined) {
-      params.push(parsed.data.species);
-      sets.push(`species = $${params.length}`);
-    }
-    if (parsed.data.departedOn !== undefined) {
-      params.push(parsed.data.departedOn);
-      sets.push(`departed_on = $${params.length}`);
-    }
-    params.push(request.params.id);
-
-    let updated;
-    try {
-      updated = await withTransaction(async (client) => {
-        const result = await client.query<{ id: string; name: string }>(
-          `UPDATE subjects SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id, name`,
-          params
-        );
-        if (result.rows[0]) {
-          await recordAudit(
-            {
-              adminUserId: request.adminUser!.id,
-              action: 'update',
-              entity: 'subject',
-              entityId: request.params.id,
-              detail: parsed.data,
+            action: "change_type",
+            entity: "subject",
+            entityId: current.id,
+            detail: {
+              name: current.name,
+              from: current.subject_type,
+              to: newType,
+              effectiveOn,
             },
-            client
+          },
+          client,
+        );
+        await client.query("COMMIT");
+        return reply
+          .status(200)
+          .send({
+            success: true,
+            data: { closedId: current.id, openedId: opened.rows[0]!.id },
+          });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        if (isPgError(error, "23514")) {
+          return fail(
+            reply,
+            400,
+            "The effective date must be after the arrival date",
           );
         }
-        return result;
-      });
-    } catch (error) {
-      if (isPgError(error, '23514')) {
-        return fail(reply, 400, 'The departure date must be after the arrival date');
+        throw error;
+      } finally {
+        client.release();
       }
-      if (isPgError(error, '23P01')) {
-        return fail(reply, 409, 'That change would overlap another residency episode');
-      }
-      throw error;
-    }
-    if (!updated.rows[0]) return fail(reply, 404, 'Unknown subject');
+    },
+  );
 
-    return reply.status(200).send({ success: true, data: updated.rows[0] });
-  });
-
-  // "Type change" (e.g. baby → juvenile) is one action that closes the open
-  // episode and opens a new one on the effective date (Phase 1 §2.2)
-  app.post<{ Params: { id: string } }>('/subjects/:id/change-type', async (request, reply) => {
-    if (!UUID_PATTERN.test(request.params.id)) return fail(reply, 404, 'Unknown subject');
-    const parsed = z
-      .object({
-        newType: z.enum(['foster_parent', 'juvenile', 'baby']),
-        effectiveOn: isoDate,
-      })
-      .safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'Provide newType and effectiveOn');
-    const { newType, effectiveOn } = parsed.data;
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const episode = await client.query<{
-        id: string;
-        aviary_id: string;
+  app.delete<{ Params: { id: string } }>(
+    "/subjects/:id",
+    async (request, reply) => {
+      if (!UUID_PATTERN.test(request.params.id))
+        return fail(reply, 404, "Unknown subject");
+      const episode = await query<{
         name: string;
-        species: string;
         subject_type: string;
         arrived_on: string;
-        departed_on: string | null;
-      }>(`SELECT * FROM subjects WHERE id = $1 FOR UPDATE`, [request.params.id]);
+        slug: string;
+      }>(
+        `SELECT s.name, s.subject_type, to_char(s.arrived_on, 'YYYY-MM-DD') AS arrived_on, a.slug
+       FROM subjects s JOIN aviaries a ON a.id = s.aviary_id WHERE s.id = $1`,
+        [request.params.id],
+      );
       const current = episode.rows[0];
-      if (!current) {
-        await client.query('ROLLBACK');
-        return fail(reply, 404, 'Unknown subject');
-      }
-      if (current.departed_on !== null) {
-        await client.query('ROLLBACK');
-        return fail(reply, 409, 'This episode is already closed — the bird has departed');
-      }
-      if (current.subject_type === newType) {
-        await client.query('ROLLBACK');
-        return fail(reply, 400, `This bird is already recorded as ${newType}`);
-      }
+      if (!current) return fail(reply, 404, "Unknown subject");
 
-      await client.query(`UPDATE subjects SET departed_on = $1 WHERE id = $2`, [
-        effectiveOn,
-        current.id,
-      ]);
-      const opened = await client.query<{ id: string }>(
-        `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [current.aviary_id, current.name, current.species, newType, effectiveOn]
-      );
-      await recordAudit(
-        {
-          adminUserId: request.adminUser!.id,
-          action: 'change_type',
-          entity: 'subject',
-          entityId: current.id,
-          detail: { name: current.name, from: current.subject_type, to: newType, effectiveOn },
-        },
-        client
-      );
-      await client.query('COMMIT');
+      const outcome = await withTransaction(async (client) => {
+        await lockAgainstPublish(client);
+        const published = await everPublished(
+          {
+            aviaries: [
+              {
+                slug: current.slug,
+                subjects: [
+                  {
+                    name: current.name,
+                    type: current.subject_type,
+                    arrivedOn: current.arrived_on,
+                  },
+                ],
+              },
+            ],
+          },
+          client,
+        );
+        if (published) return "published" as const;
+
+        await client.query(`DELETE FROM subjects WHERE id = $1`, [
+          request.params.id,
+        ]);
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: "delete",
+            entity: "subject",
+            entityId: request.params.id,
+            detail: { aviary: current.slug, name: current.name },
+          },
+          client,
+        );
+        return "deleted" as const;
+      });
+
+      if (outcome === "published") {
+        return fail(
+          reply,
+          409,
+          "This episode appears in a published config version and cannot be deleted — record a departure instead",
+        );
+      }
       return reply
         .status(200)
-        .send({ success: true, data: { closedId: current.id, openedId: opened.rows[0]!.id } });
-    } catch (error) {
-      await client.query('ROLLBACK');
-      if (isPgError(error, '23514')) {
-        return fail(reply, 400, 'The effective date must be after the arrival date');
-      }
-      throw error;
-    } finally {
-      client.release();
-    }
-  });
-
-  app.delete<{ Params: { id: string } }>('/subjects/:id', async (request, reply) => {
-    if (!UUID_PATTERN.test(request.params.id)) return fail(reply, 404, 'Unknown subject');
-    const episode = await query<{
-      name: string;
-      subject_type: string;
-      arrived_on: string;
-      slug: string;
-    }>(
-      `SELECT s.name, s.subject_type, to_char(s.arrived_on, 'YYYY-MM-DD') AS arrived_on, a.slug
-       FROM subjects s JOIN aviaries a ON a.id = s.aviary_id WHERE s.id = $1`,
-      [request.params.id]
-    );
-    const current = episode.rows[0];
-    if (!current) return fail(reply, 404, 'Unknown subject');
-
-    const outcome = await withTransaction(async (client) => {
-      await lockAgainstPublish(client);
-      const published = await everPublished(
-        {
-          aviaries: [
-            {
-              slug: current.slug,
-              subjects: [
-                { name: current.name, type: current.subject_type, arrivedOn: current.arrived_on },
-              ],
-            },
-          ],
-        },
-        client
-      );
-      if (published) return 'published' as const;
-
-      await client.query(`DELETE FROM subjects WHERE id = $1`, [request.params.id]);
-      await recordAudit(
-        {
-          adminUserId: request.adminUser!.id,
-          action: 'delete',
-          entity: 'subject',
-          entityId: request.params.id,
-          detail: { aviary: current.slug, name: current.name },
-        },
-        client
-      );
-      return 'deleted' as const;
-    });
-
-    if (outcome === 'published') {
-      return fail(
-        reply,
-        409,
-        'This episode appears in a published config version and cannot be deleted — record a departure instead'
-      );
-    }
-    return reply.status(200).send({ success: true, data: { id: request.params.id } });
-  });
+        .send({ success: true, data: { id: request.params.id } });
+    },
+  );
 
   // ===========================================================================
   // BEHAVIOR GROUPS
   // ===========================================================================
 
-  app.post('/behavior-groups', async (request, reply) => {
+  app.post("/behavior-groups", async (request, reply) => {
     const parsed = z
-      .object({ name: z.string().trim().min(1).max(100), sortOrder: sortOrderSchema })
+      .object({
+        name: z.string().trim().min(1).max(100),
+        sortOrder: sortOrderSchema,
+      })
       .safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'A group needs a name and a sort order');
+    if (!parsed.success)
+      return fail(reply, 400, "A group needs a name and a sort order");
 
     try {
       await withTransaction(async (client) => {
-        await client.query(`INSERT INTO behavior_groups (name, sort_order) VALUES ($1, $2)`, [
-          parsed.data.name,
-          parsed.data.sortOrder,
-        ]);
+        await client.query(
+          `INSERT INTO behavior_groups (name, sort_order) VALUES ($1, $2)`,
+          [parsed.data.name, parsed.data.sortOrder],
+        );
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'create',
-            entity: 'behavior_group',
+            action: "create",
+            entity: "behavior_group",
             entityId: parsed.data.name,
             detail: { sortOrder: parsed.data.sortOrder },
           },
-          client
+          client,
         );
       });
     } catch (error) {
-      if (isPgError(error, '23505')) {
-        return fail(reply, 409, 'A group with that name already exists');
+      if (isPgError(error, "23505")) {
+        return fail(reply, 409, "A group with that name already exists");
       }
       throw error;
     }
-    return reply.status(201).send({ success: true, data: { name: parsed.data.name } });
+    return reply
+      .status(201)
+      .send({ success: true, data: { name: parsed.data.name } });
   });
 
   // ===========================================================================
   // BEHAVIORS
   // ===========================================================================
 
-  app.post('/behaviors', async (request, reply) => {
+  app.post("/behaviors", async (request, reply) => {
     // Every schema-mandated field is required (design §3): a half-specified
     // behavior can't reach publish
     const parsed = z
@@ -805,41 +1023,49 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       return fail(
         reply,
         400,
-        'A behavior needs value, label, group, all six requires-flags, and an Excel row label'
+        "A behavior needs value, label, group, all six requires-flags, and an Excel row label",
       );
     }
     const body = parsed.data;
 
     const client = await pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
       const group = await client.query<{ id: string }>(
         `SELECT id FROM behavior_groups WHERE name = $1`,
-        [body.group]
+        [body.group],
       );
       if (!group.rows[0]) {
-        await client.query('ROLLBACK');
-        return fail(reply, 400, `Unknown behavior group "${body.group}" — create it first`);
+        await client.query("ROLLBACK");
+        return fail(
+          reply,
+          400,
+          `Unknown behavior group "${body.group}" — create it first`,
+        );
       }
 
       let rowOrder: number;
       if (body.insertAfter) {
         const after = await client.query<{ excel_row_order: number }>(
           `SELECT excel_row_order FROM behaviors WHERE value = $1`,
-          [body.insertAfter]
+          [body.insertAfter],
         );
         if (!after.rows[0]) {
-          await client.query('ROLLBACK');
-          return fail(reply, 400, `Unknown behavior "${body.insertAfter}" to insert after`);
+          await client.query("ROLLBACK");
+          return fail(
+            reply,
+            400,
+            `Unknown behavior "${body.insertAfter}" to insert after`,
+          );
         }
         rowOrder = after.rows[0].excel_row_order + 1;
         await client.query(
           `UPDATE behaviors SET excel_row_order = excel_row_order + 1 WHERE excel_row_order >= $1`,
-          [rowOrder]
+          [rowOrder],
         );
       } else {
         const max = await client.query<{ next: number }>(
-          `SELECT COALESCE(MAX(excel_row_order), 0) + 1 AS next FROM behaviors`
+          `SELECT COALESCE(MAX(excel_row_order), 0) + 1 AS next FROM behaviors`,
         );
         rowOrder = max.rows[0]!.next;
       }
@@ -861,23 +1087,29 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           body.requiresDescription,
           body.excelRowLabel,
           rowOrder,
-        ]
+        ],
       );
       await recordAudit(
         {
           adminUserId: request.adminUser!.id,
-          action: 'create',
-          entity: 'behavior',
+          action: "create",
+          entity: "behavior",
           entityId: body.value,
-          detail: { label: body.label, group: body.group, excelRowOrder: rowOrder },
+          detail: {
+            label: body.label,
+            group: body.group,
+            excelRowOrder: rowOrder,
+          },
         },
-        client
+        client,
       );
-      await client.query('COMMIT');
-      return reply.status(201).send({ success: true, data: { value: body.value } });
+      await client.query("COMMIT");
+      return reply
+        .status(201)
+        .send({ success: true, data: { value: body.value } });
     } catch (error) {
-      await client.query('ROLLBACK');
-      if (isPgError(error, '23505')) {
+      await client.query("ROLLBACK");
+      if (isPgError(error, "23505")) {
         return fail(reply, 409, `Behavior "${body.value}" already exists`);
       }
       throw error;
@@ -886,167 +1118,200 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.patch<{ Params: { value: string } }>('/behaviors/:value', async (request, reply) => {
-    const parsed = z
-      .object({
-        label: labelSchema.optional(),
-        group: z.string().trim().min(1).max(100).optional(),
-        requiresLocation: z.boolean().optional(),
-        requiresObject: z.boolean().optional(),
-        requiresObjectInteraction: z.boolean().optional(),
-        requiresAnimal: z.boolean().optional(),
-        requiresAnimalInteraction: z.boolean().optional(),
-        requiresDescription: z.boolean().optional(),
-        excelRowLabel: labelSchema.optional(),
-        retired: z.boolean().optional(),
-      })
-      .refine((body) => Object.values(body).some((v) => v !== undefined))
-      .safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'Nothing to update');
-    const body = parsed.data;
+  app.patch<{ Params: { value: string } }>(
+    "/behaviors/:value",
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          label: labelSchema.optional(),
+          group: z.string().trim().min(1).max(100).optional(),
+          requiresLocation: z.boolean().optional(),
+          requiresObject: z.boolean().optional(),
+          requiresObjectInteraction: z.boolean().optional(),
+          requiresAnimal: z.boolean().optional(),
+          requiresAnimalInteraction: z.boolean().optional(),
+          requiresDescription: z.boolean().optional(),
+          excelRowLabel: labelSchema.optional(),
+          retired: z.boolean().optional(),
+        })
+        .refine((body) => Object.values(body).some((v) => v !== undefined))
+        .safeParse(request.body);
+      if (!parsed.success) return fail(reply, 400, "Nothing to update");
+      const body = parsed.data;
 
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    const push = (column: string, value: unknown): void => {
-      params.push(value);
-      sets.push(`${column} = $${params.length}`);
-    };
-    if (body.label !== undefined) push('label', body.label);
-    if (body.group !== undefined) {
-      const group = await query<{ id: string }>(`SELECT id FROM behavior_groups WHERE name = $1`, [
-        body.group,
-      ]);
-      if (!group.rows[0]) return fail(reply, 400, `Unknown behavior group "${body.group}"`);
-      push('group_id', group.rows[0].id);
-    }
-    if (body.requiresLocation !== undefined) push('requires_location', body.requiresLocation);
-    if (body.requiresObject !== undefined) push('requires_object', body.requiresObject);
-    if (body.requiresObjectInteraction !== undefined)
-      push('requires_object_interaction', body.requiresObjectInteraction);
-    if (body.requiresAnimal !== undefined) push('requires_animal', body.requiresAnimal);
-    if (body.requiresAnimalInteraction !== undefined)
-      push('requires_animal_interaction', body.requiresAnimalInteraction);
-    if (body.requiresDescription !== undefined)
-      push('requires_description', body.requiresDescription);
-    if (body.excelRowLabel !== undefined) push('excel_row_label', body.excelRowLabel);
-    if (body.retired !== undefined) {
-      sets.push(body.retired ? `retired_at = COALESCE(retired_at, NOW())` : `retired_at = NULL`);
-    }
-    params.push(request.params.value);
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      const push = (column: string, value: unknown): void => {
+        params.push(value);
+        sets.push(`${column} = $${params.length}`);
+      };
+      if (body.label !== undefined) push("label", body.label);
+      if (body.group !== undefined) {
+        const group = await query<{ id: string }>(
+          `SELECT id FROM behavior_groups WHERE name = $1`,
+          [body.group],
+        );
+        if (!group.rows[0])
+          return fail(reply, 400, `Unknown behavior group "${body.group}"`);
+        push("group_id", group.rows[0].id);
+      }
+      if (body.requiresLocation !== undefined)
+        push("requires_location", body.requiresLocation);
+      if (body.requiresObject !== undefined)
+        push("requires_object", body.requiresObject);
+      if (body.requiresObjectInteraction !== undefined)
+        push("requires_object_interaction", body.requiresObjectInteraction);
+      if (body.requiresAnimal !== undefined)
+        push("requires_animal", body.requiresAnimal);
+      if (body.requiresAnimalInteraction !== undefined)
+        push("requires_animal_interaction", body.requiresAnimalInteraction);
+      if (body.requiresDescription !== undefined)
+        push("requires_description", body.requiresDescription);
+      if (body.excelRowLabel !== undefined)
+        push("excel_row_label", body.excelRowLabel);
+      if (body.retired !== undefined) {
+        sets.push(
+          body.retired
+            ? `retired_at = COALESCE(retired_at, NOW())`
+            : `retired_at = NULL`,
+        );
+      }
+      params.push(request.params.value);
 
-    const updated = await withTransaction(async (client) => {
-      const result = await client.query(
-        `UPDATE behaviors SET ${sets.join(', ')} WHERE value = $${params.length} RETURNING value`,
-        params
-      );
-      if (result.rows[0]) {
+      const updated = await withTransaction(async (client) => {
+        const result = await client.query(
+          `UPDATE behaviors SET ${sets.join(", ")} WHERE value = $${params.length} RETURNING value`,
+          params,
+        );
+        if (result.rows[0]) {
+          await recordAudit(
+            {
+              adminUserId: request.adminUser!.id,
+              action: "update",
+              entity: "behavior",
+              entityId: request.params.value,
+              detail: body,
+            },
+            client,
+          );
+        }
+        return result;
+      });
+      if (!updated.rows[0]) return fail(reply, 404, "Unknown behavior");
+
+      return reply
+        .status(200)
+        .send({ success: true, data: { value: request.params.value } });
+    },
+  );
+
+  app.delete<{ Params: { value: string } }>(
+    "/behaviors/:value",
+    async (request, reply) => {
+      const outcome = await withTransaction(async (client) => {
+        await lockAgainstPublish(client);
+        const published = await everPublished(
+          { behaviors: [{ value: request.params.value }] },
+          client,
+        );
+        if (published) return "published" as const;
+
+        await client.query(
+          `DELETE FROM aviary_behaviors WHERE behavior_id = (SELECT id FROM behaviors WHERE value = $1)`,
+          [request.params.value],
+        );
+        const deleted = await client.query(
+          `DELETE FROM behaviors WHERE value = $1 RETURNING value`,
+          [request.params.value],
+        );
+        if (!deleted.rows[0]) return "missing" as const;
+
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'update',
-            entity: 'behavior',
+            action: "delete",
+            entity: "behavior",
             entityId: request.params.value,
-            detail: body,
           },
-          client
+          client,
+        );
+        return "deleted" as const;
+      });
+
+      if (outcome === "published") {
+        return fail(
+          reply,
+          409,
+          "This behavior appears in a published config version and cannot be deleted — retire it instead",
         );
       }
-      return result;
-    });
-    if (!updated.rows[0]) return fail(reply, 404, 'Unknown behavior');
-
-    return reply.status(200).send({ success: true, data: { value: request.params.value } });
-  });
-
-  app.delete<{ Params: { value: string } }>('/behaviors/:value', async (request, reply) => {
-    const outcome = await withTransaction(async (client) => {
-      await lockAgainstPublish(client);
-      const published = await everPublished(
-        { behaviors: [{ value: request.params.value }] },
-        client
-      );
-      if (published) return 'published' as const;
-
-      await client.query(
-        `DELETE FROM aviary_behaviors WHERE behavior_id = (SELECT id FROM behaviors WHERE value = $1)`,
-        [request.params.value]
-      );
-      const deleted = await client.query(`DELETE FROM behaviors WHERE value = $1 RETURNING value`, [
-        request.params.value,
-      ]);
-      if (!deleted.rows[0]) return 'missing' as const;
-
-      await recordAudit(
-        {
-          adminUserId: request.adminUser!.id,
-          action: 'delete',
-          entity: 'behavior',
-          entityId: request.params.value,
-        },
-        client
-      );
-      return 'deleted' as const;
-    });
-
-    if (outcome === 'published') {
-      return fail(
-        reply,
-        409,
-        'This behavior appears in a published config version and cannot be deleted — retire it instead'
-      );
-    }
-    if (outcome === 'missing') return fail(reply, 404, 'Unknown behavior');
-    return reply.status(200).send({ success: true, data: { value: request.params.value } });
-  });
+      if (outcome === "missing") return fail(reply, 404, "Unknown behavior");
+      return reply
+        .status(200)
+        .send({ success: true, data: { value: request.params.value } });
+    },
+  );
 
   // ===========================================================================
   // VOCAB OPTIONS (objects, animals, interaction types)
   // ===========================================================================
 
-  app.post('/options', async (request, reply) => {
+  app.post("/options", async (request, reply) => {
     const parsed = z
-      .object({ kind: z.enum(VOCAB_KINDS), value: wireValueSchema, label: labelSchema })
+      .object({
+        kind: z.enum(VOCAB_KINDS),
+        value: wireValueSchema,
+        label: labelSchema,
+      })
       .safeParse(request.body);
-    if (!parsed.success) return fail(reply, 400, 'An option needs a kind, value, and label');
+    if (!parsed.success)
+      return fail(reply, 400, "An option needs a kind, value, and label");
     const { kind, value, label } = parsed.data;
 
     try {
       await withTransaction(async (client) => {
-        await client.query(`INSERT INTO vocab_options (kind, value, label) VALUES ($1, $2, $3)`, [
-          kind,
-          value,
-          label,
-        ]);
+        await client.query(
+          `INSERT INTO vocab_options (kind, value, label) VALUES ($1, $2, $3)`,
+          [kind, value, label],
+        );
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'create',
-            entity: 'vocab_option',
+            action: "create",
+            entity: "vocab_option",
             entityId: `${kind}/${value}`,
             detail: { label },
           },
-          client
+          client,
         );
       });
     } catch (error) {
-      if (isPgError(error, '23505')) {
+      if (isPgError(error, "23505")) {
         return fail(reply, 409, `The ${kind} option "${value}" already exists`);
       }
       throw error;
     }
-    return reply.status(201).send({ success: true, data: { kind, value, label } });
+    return reply
+      .status(201)
+      .send({ success: true, data: { kind, value, label } });
   });
 
   app.patch<{ Params: { kind: string; value: string } }>(
-    '/options/:kind/:value',
+    "/options/:kind/:value",
     async (request, reply) => {
       const kindParsed = z.enum(VOCAB_KINDS).safeParse(request.params.kind);
-      if (!kindParsed.success) return fail(reply, 404, 'Unknown option kind');
+      if (!kindParsed.success) return fail(reply, 404, "Unknown option kind");
       const parsed = z
-        .object({ label: labelSchema.optional(), retired: z.boolean().optional() })
-        .refine((body) => body.label !== undefined || body.retired !== undefined)
+        .object({
+          label: labelSchema.optional(),
+          retired: z.boolean().optional(),
+        })
+        .refine(
+          (body) => body.label !== undefined || body.retired !== undefined,
+        )
         .safeParse(request.body);
-      if (!parsed.success) return fail(reply, 400, 'Provide a label and/or retired');
+      if (!parsed.success)
+        return fail(reply, 400, "Provide a label and/or retired");
 
       const sets: string[] = [];
       const params: unknown[] = [];
@@ -1056,174 +1321,199 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       }
       if (parsed.data.retired !== undefined) {
         sets.push(
-          parsed.data.retired ? `retired_at = COALESCE(retired_at, NOW())` : `retired_at = NULL`
+          parsed.data.retired
+            ? `retired_at = COALESCE(retired_at, NOW())`
+            : `retired_at = NULL`,
         );
       }
       params.push(kindParsed.data, request.params.value);
 
       const updated = await withTransaction(async (client) => {
         const result = await client.query(
-          `UPDATE vocab_options SET ${sets.join(', ')}
+          `UPDATE vocab_options SET ${sets.join(", ")}
            WHERE kind = $${params.length - 1} AND value = $${params.length}
            RETURNING value`,
-          params
+          params,
         );
         if (result.rows[0]) {
           await recordAudit(
             {
               adminUserId: request.adminUser!.id,
-              action: 'update',
-              entity: 'vocab_option',
+              action: "update",
+              entity: "vocab_option",
               entityId: `${kindParsed.data}/${request.params.value}`,
               detail: parsed.data,
             },
-            client
+            client,
           );
         }
         return result;
       });
-      if (!updated.rows[0]) return fail(reply, 404, 'Unknown option');
+      if (!updated.rows[0]) return fail(reply, 404, "Unknown option");
 
-      return reply.status(200).send({ success: true, data: { value: request.params.value } });
-    }
+      return reply
+        .status(200)
+        .send({ success: true, data: { value: request.params.value } });
+    },
   );
 
   app.delete<{ Params: { kind: string; value: string } }>(
-    '/options/:kind/:value',
+    "/options/:kind/:value",
     async (request, reply) => {
       const kindParsed = z.enum(VOCAB_KINDS).safeParse(request.params.kind);
-      if (!kindParsed.success) return fail(reply, 404, 'Unknown option kind');
+      if (!kindParsed.success) return fail(reply, 404, "Unknown option kind");
       const kind = kindParsed.data;
 
       const outcome = await withTransaction(async (client) => {
         await lockAgainstPublish(client);
         const published = await everPublished(
           { [KIND_TO_DOC_KEY[kind]]: [{ value: request.params.value }] },
-          client
+          client,
         );
-        if (published) return 'published' as const;
+        if (published) return "published" as const;
 
         await client.query(
           `DELETE FROM aviary_vocab_options
            WHERE vocab_option_id = (SELECT id FROM vocab_options WHERE kind = $1 AND value = $2)`,
-          [kind, request.params.value]
+          [kind, request.params.value],
         );
         const deleted = await client.query(
           `DELETE FROM vocab_options WHERE kind = $1 AND value = $2 RETURNING value`,
-          [kind, request.params.value]
+          [kind, request.params.value],
         );
-        if (!deleted.rows[0]) return 'missing' as const;
+        if (!deleted.rows[0]) return "missing" as const;
 
         await recordAudit(
           {
             adminUserId: request.adminUser!.id,
-            action: 'delete',
-            entity: 'vocab_option',
+            action: "delete",
+            entity: "vocab_option",
             entityId: `${kind}/${request.params.value}`,
           },
-          client
+          client,
         );
-        return 'deleted' as const;
+        return "deleted" as const;
       });
 
-      if (outcome === 'published') {
+      if (outcome === "published") {
         return fail(
           reply,
           409,
-          'This option appears in a published config version and cannot be deleted — retire it instead'
+          "This option appears in a published config version and cannot be deleted — retire it instead",
         );
       }
-      if (outcome === 'missing') return fail(reply, 404, 'Unknown option');
-      return reply.status(200).send({ success: true, data: { value: request.params.value } });
-    }
+      if (outcome === "missing") return fail(reply, 404, "Unknown option");
+      return reply
+        .status(200)
+        .send({ success: true, data: { value: request.params.value } });
+    },
   );
 
   // ===========================================================================
   // ENABLEMENT (replace-set per aviary — the matrix UI submits the whole set)
   // ===========================================================================
 
-  app.put<{ Params: { slug: string } }>('/aviaries/:slug/enablement', async (request, reply) => {
-    const parsed = z
-      .object({
-        behaviors: z.array(wireValueSchema),
-        object: z.array(wireValueSchema),
-        object_interaction: z.array(wireValueSchema),
-        animal: z.array(wireValueSchema),
-        animal_interaction: z.array(wireValueSchema),
-      })
-      .safeParse(request.body);
-    if (!parsed.success) {
-      return fail(reply, 400, 'Provide behaviors plus all four option kinds as arrays of values');
-    }
-    const body = parsed.data;
-
-    const aviary = await aviaryBySlug(request.params.slug);
-    if (!aviary) return fail(reply, 404, 'Unknown aviary');
-
-    // Validate every value exists in the catalog before touching junctions
-    const behaviorValues = [...new Set(body.behaviors)];
-    const known = await query<{ value: string }>(
-      `SELECT value FROM behaviors WHERE value = ANY($1)`,
-      [behaviorValues]
-    );
-    if (known.rows.length !== behaviorValues.length) {
-      const knownSet = new Set(known.rows.map((r) => r.value));
-      const unknown = behaviorValues.filter((v) => !knownSet.has(v));
-      return fail(reply, 400, `Unknown behaviors: ${unknown.join(', ')}`);
-    }
-    for (const kind of VOCAB_KINDS) {
-      const values = [...new Set(body[kind])];
-      const knownOptions = await query<{ value: string }>(
-        `SELECT value FROM vocab_options WHERE kind = $1 AND value = ANY($2)`,
-        [kind, values]
-      );
-      if (knownOptions.rows.length !== values.length) {
-        const knownSet = new Set(knownOptions.rows.map((r) => r.value));
-        const unknown = values.filter((v) => !knownSet.has(v));
-        return fail(reply, 400, `Unknown ${kind} options: ${unknown.join(', ')}`);
-      }
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`DELETE FROM aviary_behaviors WHERE aviary_id = $1`, [aviary.id]);
-      await client.query(
-        `INSERT INTO aviary_behaviors (aviary_id, behavior_id)
-         SELECT $1, id FROM behaviors WHERE value = ANY($2)`,
-        [aviary.id, behaviorValues]
-      );
-      await client.query(`DELETE FROM aviary_vocab_options WHERE aviary_id = $1`, [aviary.id]);
-      for (const kind of VOCAB_KINDS) {
-        await client.query(
-          `INSERT INTO aviary_vocab_options (aviary_id, vocab_option_id)
-           SELECT $1, id FROM vocab_options WHERE kind = $2 AND value = ANY($3)`,
-          [aviary.id, kind, [...new Set(body[kind])]]
+  app.put<{ Params: { slug: string } }>(
+    "/aviaries/:slug/enablement",
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          behaviors: z.array(wireValueSchema),
+          object: z.array(wireValueSchema),
+          object_interaction: z.array(wireValueSchema),
+          animal: z.array(wireValueSchema),
+          animal_interaction: z.array(wireValueSchema),
+        })
+        .safeParse(request.body);
+      if (!parsed.success) {
+        return fail(
+          reply,
+          400,
+          "Provide behaviors plus all four option kinds as arrays of values",
         );
       }
-      await recordAudit(
-        {
-          adminUserId: request.adminUser!.id,
-          action: 'set_enablement',
-          entity: 'aviary',
-          entityId: aviary.slug,
-          detail: {
-            behaviors: behaviorValues.length,
-            object: new Set(body.object).size,
-            object_interaction: new Set(body.object_interaction).size,
-            animal: new Set(body.animal).size,
-            animal_interaction: new Set(body.animal_interaction).size,
-          },
-        },
-        client
+      const body = parsed.data;
+
+      const aviary = await aviaryBySlug(request.params.slug);
+      if (!aviary) return fail(reply, 404, "Unknown aviary");
+
+      // Validate every value exists in the catalog before touching junctions
+      const behaviorValues = [...new Set(body.behaviors)];
+      const known = await query<{ value: string }>(
+        `SELECT value FROM behaviors WHERE value = ANY($1)`,
+        [behaviorValues],
       );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-    return reply.status(200).send({ success: true, data: { slug: aviary.slug } });
-  });
+      if (known.rows.length !== behaviorValues.length) {
+        const knownSet = new Set(known.rows.map((r) => r.value));
+        const unknown = behaviorValues.filter((v) => !knownSet.has(v));
+        return fail(reply, 400, `Unknown behaviors: ${unknown.join(", ")}`);
+      }
+      for (const kind of VOCAB_KINDS) {
+        const values = [...new Set(body[kind])];
+        const knownOptions = await query<{ value: string }>(
+          `SELECT value FROM vocab_options WHERE kind = $1 AND value = ANY($2)`,
+          [kind, values],
+        );
+        if (knownOptions.rows.length !== values.length) {
+          const knownSet = new Set(knownOptions.rows.map((r) => r.value));
+          const unknown = values.filter((v) => !knownSet.has(v));
+          return fail(
+            reply,
+            400,
+            `Unknown ${kind} options: ${unknown.join(", ")}`,
+          );
+        }
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `DELETE FROM aviary_behaviors WHERE aviary_id = $1`,
+          [aviary.id],
+        );
+        await client.query(
+          `INSERT INTO aviary_behaviors (aviary_id, behavior_id)
+         SELECT $1, id FROM behaviors WHERE value = ANY($2)`,
+          [aviary.id, behaviorValues],
+        );
+        await client.query(
+          `DELETE FROM aviary_vocab_options WHERE aviary_id = $1`,
+          [aviary.id],
+        );
+        for (const kind of VOCAB_KINDS) {
+          await client.query(
+            `INSERT INTO aviary_vocab_options (aviary_id, vocab_option_id)
+           SELECT $1, id FROM vocab_options WHERE kind = $2 AND value = ANY($3)`,
+            [aviary.id, kind, [...new Set(body[kind])]],
+          );
+        }
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: "set_enablement",
+            entity: "aviary",
+            entityId: aviary.slug,
+            detail: {
+              behaviors: behaviorValues.length,
+              object: new Set(body.object).size,
+              object_interaction: new Set(body.object_interaction).size,
+              animal: new Set(body.animal).size,
+              animal_interaction: new Set(body.animal_interaction).size,
+            },
+          },
+          client,
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      return reply
+        .status(200)
+        .send({ success: true, data: { slug: aviary.slug } });
+    },
+  );
 };

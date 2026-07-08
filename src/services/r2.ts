@@ -10,15 +10,28 @@
  * overwritten — a re-upload of the same view gets the next N.
  */
 
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { config } from '../config.js';
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { config } from "../config.js";
 
-export const UPLOAD_CONTENT_TYPES: Record<string, string> = {
-  'image/webp': 'webp',
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-};
+// Null-prototype so a lookup like UPLOAD_CONTENT_TYPES[input] can't resolve
+// through Object.prototype ('constructor', 'toString', …) — those inherited
+// keys are truthy and would otherwise pass a `!extension` guard. The route
+// also validates contentType with z.enum() built from these keys.
+export const UPLOAD_CONTENT_TYPES: Record<string, string> = Object.assign(
+  Object.create(null),
+  {
+    "image/webp": "webp",
+    "image/png": "png",
+    "image/jpeg": "jpg",
+  },
+);
+
+export const UPLOAD_CONTENT_TYPE_VALUES = [
+  "image/webp",
+  "image/png",
+  "image/jpeg",
+] as const;
 
 /** Max upload size the CLIENT enforces before asking for a URL. A presigned
  * PUT binds content type but not length (design §4 — admins are trusted and
@@ -31,37 +44,47 @@ export const UPLOAD_URL_TTL_SECONDS = 600;
 export function slugifyLabel(label: string): string {
   return label
     .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /**
- * First versioned key (v1, v2, …) whose candidate URL is not already taken.
- * `isTaken` is the caller's lookup against current rows AND published history.
+ * First versioned key (v1, v2, …) that is not already taken. `isTaken` is the
+ * caller's lookup — it must consult current draft rows, published history AND
+ * previously-minted-but-unsaved keys (the reservation), so two overlapping
+ * mints for the same aviary+label never receive the same key and a bucket
+ * object is never overwritten. A hard ceiling guards against a caller whose
+ * predicate always returns true (misconfiguration) rather than looping forever.
  */
 export async function nextDiagramKey(
   aviarySlug: string,
   label: string,
   extension: string,
-  isTaken: (url: string) => Promise<boolean>
+  isTaken: (candidate: { key: string; url: string }) => Promise<boolean>,
 ): Promise<{ key: string; publicUrl: string }> {
   const labelSlug = slugifyLabel(label);
-  if (!labelSlug) throw new Error('label produces an empty slug');
+  if (!labelSlug) throw new Error("label produces an empty slug");
   const base = config.r2!.publicBaseUrl;
-  for (let n = 1; ; n++) {
+  for (let n = 1; n <= 10000; n++) {
     const key = `perch-diagram-${aviarySlug}-${labelSlug}-v${n}.${extension}`;
     const publicUrl = `${base}/${key}`;
-    if (!(await isTaken(publicUrl))) return { key, publicUrl };
+    if (!(await isTaken({ key, url: publicUrl }))) return { key, publicUrl };
   }
+  throw new Error(
+    "could not allocate a diagram version — every candidate was taken",
+  );
 }
 
 /** Presigned PUT URL for the given key — valid for UPLOAD_URL_TTL_SECONDS. */
-export async function presignDiagramUpload(key: string, contentType: string): Promise<string> {
+export async function presignDiagramUpload(
+  key: string,
+  contentType: string,
+): Promise<string> {
   const r2 = config.r2!;
   const client = new S3Client({
-    region: 'auto',
+    region: "auto",
     endpoint: `https://${r2.accountId}.r2.cloudflarestorage.com`,
     credentials: {
       accessKeyId: r2.accessKeyId,
@@ -69,7 +92,7 @@ export async function presignDiagramUpload(key: string, contentType: string): Pr
     },
     // Without this the SDK signs a CRC32 checksum of the EMPTY body into the
     // presigned query — every real upload would then fail checksum validation
-    requestChecksumCalculation: 'WHEN_REQUIRED',
+    requestChecksumCalculation: "WHEN_REQUIRED",
   });
   return getSignedUrl(
     client,
@@ -77,14 +100,20 @@ export async function presignDiagramUpload(key: string, contentType: string): Pr
       Bucket: r2.bucket,
       Key: key,
       ContentType: contentType,
+      // Storage-layer backstop for the never-overwrite invariant: R2 rejects a
+      // PUT with 412 if the key already exists, so even a replayed or racing
+      // presigned URL can never overwrite an object frozen into published
+      // history. The browser must send this exact header (see uploadToBucket)
+      // and the bucket CORS must allow If-None-Match.
+      IfNoneMatch: "*",
     }),
     {
       expiresIn: UPLOAD_URL_TTL_SECONDS,
-      // Keep content-type a SIGNED HEADER (marked signable AND not hoisted
-      // out into the query): the browser's PUT must then send exactly the
-      // declared type — the type binding the design promises (§4)
-      signableHeaders: new Set(['content-type', 'host']),
-      unhoistableHeaders: new Set(['content-type']),
-    }
+      // Keep these SIGNED headers (signable AND not hoisted into the query):
+      // the browser's PUT must send exactly this content-type and If-None-Match
+      // or the signature won't match — the type binding + overwrite guard (§4)
+      signableHeaders: new Set(["content-type", "host", "if-none-match"]),
+      unhoistableHeaders: new Set(["content-type", "if-none-match"]),
+    },
   );
 }
