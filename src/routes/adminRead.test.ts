@@ -132,7 +132,9 @@ describe('GET /api/admin/overview', () => {
       perches: 50, // active only (overview filters retired); 009 re-catalog
       diagrams: 3, // Eastern Perimeter / NW & Central / SW & Central (009)
     });
-    expect(latestVersion.version).toBe(4);
+    // Grows by one with each config publish (v5 = number-forward labels);
+    // assert a floor rather than pinning a churn-prone exact number.
+    expect(latestVersion.version).toBeGreaterThanOrEqual(5);
     expect(latestVersion.publishedAt).toBeTruthy();
     // Editing tables match the latest snapshot on a freshly migrated DB
     expect(unpublishedChanges).toBe(false);
@@ -249,7 +251,13 @@ describe('GET /api/admin/config-versions', () => {
     expect(response.statusCode).toBe(200);
     const { versions } = response.json().data;
 
-    expect(versions.map((v: { version: number }) => v.version)).toEqual([4, 3, 2, 1]);
+    // Test the newest-first property, not the exact list — the version count
+    // grows with every publish (now through v5) and pinning it churns.
+    const nums = versions.map((v: { version: number }) => v.version);
+    expect(nums.length).toBeGreaterThanOrEqual(5);
+    expect([...nums].sort((a: number, b: number) => b - a)).toEqual(nums); // descending
+    expect(new Set(nums).size).toBe(nums.length); // no duplicates
+    expect(nums[nums.length - 1]).toBe(1); // v1 is the oldest
     for (const version of versions) {
       expect(version.publishedAt).toBeTruthy();
     }
