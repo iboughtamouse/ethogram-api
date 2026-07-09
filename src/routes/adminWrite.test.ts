@@ -437,6 +437,23 @@ describe("perch diagrams (replace-set)", () => {
     expect(response.statusCode).toBe(400);
   });
 
+  it("blames the field, not the count, when a label is too long", async () => {
+    // A >255-char label is a too_big at a nested path, not the array's own
+    // .max(12) — the error must name the field, not tell staff to remove a
+    // diagram (which would never clear it)
+    const url = await mintUrl("Overlong");
+    const response = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [{ url, label: "N".repeat(256) }],
+      },
+    );
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatch(/retype it/);
+    expect(response.json().error).not.toMatch(/at most 12/);
+  });
+
   it("keeps an already-current URL editable even if it predates the upload base", async () => {
     // A legacy row (different base, e.g. a migration-seeded diagram) is already
     // current, so it bypasses the minted-URL check for relabel/reorder/remove

@@ -516,8 +516,12 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         })
         .safeParse(request.body);
       if (!parsed.success) {
+        // Only the array's own `.max(12)` reports too_big at the top level
+        // (path ["diagrams"]); a too-long url/label reports too_big at a nested
+        // path — scope to path.length === 1 so those fall through to the
+        // field-level message instead of the misleading "too many" one
         const tooMany = parsed.error.issues.some(
-          (issue) => issue.code === "too_big",
+          (issue) => issue.code === "too_big" && issue.path.length === 1,
         );
         return fail(
           reply,
