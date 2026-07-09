@@ -262,6 +262,17 @@ describe("perches", () => {
       );
       expect(response.statusCode, `value ${JSON.stringify(value)}`).toBe(400);
     }
+    // The message names the actual problem (not "fields missing") so staff
+    // aren't dead-ended
+    const slashed = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/perches`,
+      {
+        value: "a/b",
+        label: "X",
+      },
+    );
+    expect(slashed.json().error).toMatch(/slashes or invisible characters/);
   });
 
   it("rejects sort orders beyond the integer column range", async () => {

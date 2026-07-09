@@ -39,6 +39,21 @@ const KIND_TO_DOC_KEY: Record<(typeof VOCAB_KINDS)[number], string> = {
   animal_interaction: "animalInteractionTypes",
 };
 
+// Staff-facing words for the wire enums — these render verbatim in the
+// dashboard's error alerts, read by non-engineers
+const KIND_LABELS: Record<(typeof VOCAB_KINDS)[number], string> = {
+  object: "object",
+  object_interaction: "object interaction type",
+  animal: "animal",
+  animal_interaction: "animal interaction type",
+};
+
+const SUBJECT_TYPE_LABELS: Record<string, string> = {
+  foster_parent: "foster parent",
+  juvenile: "juvenile",
+  baby: "baby",
+};
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -304,12 +319,20 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           sortOrder: sortOrderSchema.optional(),
         })
         .safeParse(request.body);
-      if (!parsed.success)
+      if (!parsed.success) {
+        // The value grammar has non-obvious rules — when THAT check fails,
+        // say so instead of claiming fields are missing
+        const badValue = parsed.error.issues.some(
+          (issue) => issue.path[0] === "value" && issue.code === "custom",
+        );
         return fail(
           reply,
           400,
-          "A perch needs a value (max 20 chars) and a label",
+          badValue
+            ? 'Perch values can\'t contain slashes or invisible characters, and can\'t be "." or ".." — pick a short plain name like "12" or "F-1"'
+            : "A perch needs a value (max 20 chars) and a label",
         );
+      }
 
       const aviary = await aviaryBySlug(request.params.slug);
       if (!aviary) return fail(reply, 404, "Unknown aviary");
@@ -493,10 +516,15 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         })
         .safeParse(request.body);
       if (!parsed.success) {
+        const tooMany = parsed.error.issues.some(
+          (issue) => issue.code === "too_big",
+        );
         return fail(
           reply,
           400,
-          "Provide diagrams as an array of { url, label } (max 12)",
+          tooMany
+            ? "An aviary can show at most 12 diagrams — remove one before adding another"
+            : "Each diagram needs an image and a label with no invisible characters — if the label was pasted, retype it",
         );
       }
       const { diagrams } = parsed.data;
@@ -623,10 +651,15 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         })
         .safeParse(request.body);
       if (!parsed.success) {
+        const badName = parsed.error.issues.some(
+          (issue) => issue.path[0] === "name" && issue.code === "custom",
+        );
         return fail(
           reply,
           400,
-          "A subject needs a name, species, type, and arrival date",
+          badName
+            ? "The name contains invisible characters (often from copy-paste) — please retype it"
+            : "A subject needs a name, species, type, and arrival date",
         );
       }
       const { name, species, type, arrivedOn } = parsed.data;
@@ -795,7 +828,11 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         })
         .safeParse(request.body);
       if (!parsed.success)
-        return fail(reply, 400, "Provide newType and effectiveOn");
+        return fail(
+          reply,
+          400,
+          "Pick the new type and the date it takes effect",
+        );
       const { newType, effectiveOn } = parsed.data;
 
       const client = await pool.connect();
@@ -830,7 +867,7 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           return fail(
             reply,
             400,
-            `This bird is already recorded as ${newType}`,
+            `This bird is already recorded as a ${SUBJECT_TYPE_LABELS[newType]}`,
           );
         }
 
@@ -865,12 +902,10 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           client,
         );
         await client.query("COMMIT");
-        return reply
-          .status(200)
-          .send({
-            success: true,
-            data: { closedId: current.id, openedId: opened.rows[0]!.id },
-          });
+        return reply.status(200).send({
+          success: true,
+          data: { closedId: current.id, openedId: opened.rows[0]!.id },
+        });
       } catch (error) {
         await client.query("ROLLBACK");
         if (isPgError(error, "23514")) {
@@ -1287,7 +1322,11 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       });
     } catch (error) {
       if (isPgError(error, "23505")) {
-        return fail(reply, 409, `The ${kind} option "${value}" already exists`);
+        return fail(
+          reply,
+          409,
+          `The ${KIND_LABELS[kind]} "${value}" already exists`,
+        );
       }
       throw error;
     }
@@ -1460,7 +1499,7 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
           return fail(
             reply,
             400,
-            `Unknown ${kind} options: ${unknown.join(", ")}`,
+            `These ${KIND_LABELS[kind]}s aren't in the catalog: ${unknown.join(", ")}`,
           );
         }
       }
