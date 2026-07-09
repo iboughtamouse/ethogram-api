@@ -127,9 +127,9 @@ async function lockAgainstPublish(client: PoolClient): Promise<void> {
 
 async function aviaryBySlug(
   slug: string,
-): Promise<{ id: string; slug: string } | null> {
-  const result = await query<{ id: string; slug: string }>(
-    `SELECT id, slug FROM aviaries WHERE slug = $1`,
+): Promise<{ id: string; slug: string; isActive: boolean } | null> {
+  const result = await query<{ id: string; slug: string; isActive: boolean }>(
+    `SELECT id, slug, is_active AS "isActive" FROM aviaries WHERE slug = $1`,
     [slug],
   );
   return result.rows[0] ?? null;
@@ -301,6 +301,91 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
       if (!updated.rows[0]) return fail(reply, 404, "Unknown aviary");
 
       return reply.status(200).send({ success: true, data: updated.rows[0] });
+    },
+  );
+
+  // Delete a never-published DRAFT aviary outright (FU-8). Once an aviary's
+  // slug has appeared in ANY published version it can never be deleted — even
+  // while inactive — because compose_config() includes inactive aviaries, so
+  // the first publish after creation freezes the slug into history (deactivate
+  // those instead). Only a genuinely never-published draft is removable.
+  app.delete<{ Params: { slug: string } }>(
+    "/aviaries/:slug",
+    async (request, reply) => {
+      const aviary = await aviaryBySlug(request.params.slug);
+      if (!aviary) return fail(reply, 404, "Unknown aviary");
+
+      const outcome = await withTransaction(async (client) => {
+        await lockAgainstPublish(client);
+        const published = await everPublished(
+          { aviaries: [{ slug: aviary.slug }] },
+          client,
+        );
+        if (published) return "published" as const;
+
+        // A never-published aviary can't have observations (the public form
+        // only offers active, published aviaries), but refuse rather than risk
+        // cascade-deleting real observation data on any path we haven't foreseen.
+        const obs = await client.query(
+          `SELECT 1 FROM observations WHERE aviary_id = $1 LIMIT 1`,
+          [aviary.id],
+        );
+        if (obs.rows[0]) return "hasObservations" as const;
+
+        // These FKs have no ON DELETE CASCADE — remove the draft's config
+        // children explicitly, then the aviary row.
+        await client.query(
+          `DELETE FROM aviary_behaviors WHERE aviary_id = $1`,
+          [aviary.id],
+        );
+        await client.query(
+          `DELETE FROM aviary_vocab_options WHERE aviary_id = $1`,
+          [aviary.id],
+        );
+        await client.query(
+          `DELETE FROM aviary_perch_diagrams WHERE aviary_id = $1`,
+          [aviary.id],
+        );
+        await client.query(`DELETE FROM subjects WHERE aviary_id = $1`, [
+          aviary.id,
+        ]);
+        await client.query(`DELETE FROM perches WHERE aviary_id = $1`, [
+          aviary.id,
+        ]);
+        await client.query(`DELETE FROM aviaries WHERE id = $1`, [aviary.id]);
+
+        await recordAudit(
+          {
+            adminUserId: request.adminUser!.id,
+            action: "delete",
+            entity: "aviary",
+            entityId: aviary.slug,
+          },
+          client,
+        );
+        return "deleted" as const;
+      });
+
+      if (outcome === "published") {
+        return fail(
+          reply,
+          409,
+          // Don't tell an already-inactive aviary to "deactivate it instead"
+          aviary.isActive
+            ? "This aviary is in a published config version and can't be deleted — deactivate it instead"
+            : "This aviary is in a published config version and can't be deleted — it's already deactivated and hidden from observers",
+        );
+      }
+      if (outcome === "hasObservations") {
+        return fail(
+          reply,
+          409,
+          "This aviary has recorded observations and can't be deleted — deactivate it instead",
+        );
+      }
+      return reply
+        .status(200)
+        .send({ success: true, data: { slug: aviary.slug } });
     },
   );
 

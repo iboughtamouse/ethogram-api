@@ -31,6 +31,28 @@ function publish(payload: Record<string, unknown> = {}) {
   });
 }
 
+/** Create a draft behavior (ctest_ prefix so restore() sweeps it). */
+function createBehavior(value: string) {
+  return app.inject({
+    method: "POST",
+    url: "/api/admin/behaviors",
+    headers: CSRF,
+    cookies: { [SESSION_COOKIE]: session },
+    payload: {
+      value,
+      label: value,
+      group: "Other",
+      requiresLocation: false,
+      requiresObject: false,
+      requiresObjectInteraction: false,
+      requiresAnimal: false,
+      requiresAnimalInteraction: false,
+      requiresDescription: false,
+      excelRowLabel: value,
+    },
+  });
+}
+
 /** Delete any versions this file published and any draft rows it created. */
 async function restore(): Promise<void> {
   await query(`DELETE FROM config_versions WHERE id > $1`, [baselineVersion]);
@@ -296,6 +318,45 @@ describe("POST /api/admin/config/publish", () => {
         `UPDATE behaviors SET excel_row_label = $1 WHERE value = 'flying'`,
         [original],
       );
+      await restore();
+    }
+  });
+
+  // FU-9: draft fingerprinting — the reviewer's diff carries a content hash of
+  // the draft, and publish refuses if the draft moved since the review
+  it("exposes a draft fingerprint that changes when the draft changes", async () => {
+    const clean = (await getDiff()).json().data;
+    expect(clean.fingerprint).toMatch(/^[0-9a-f]{32}$/);
+    try {
+      expect((await createBehavior("ctest_fp1")).statusCode).toBe(201);
+      const dirty = (await getDiff()).json().data;
+      expect(dirty.fingerprint).toMatch(/^[0-9a-f]{32}$/);
+      expect(dirty.fingerprint).not.toBe(clean.fingerprint);
+    } finally {
+      await restore();
+    }
+  });
+
+  it("refuses a publish whose fingerprint is stale, then accepts the current one", async () => {
+    try {
+      expect((await createBehavior("ctest_fp2")).statusCode).toBe(201);
+      const stale = (await getDiff()).json().data.fingerprint;
+
+      // The draft moves again after the review was opened
+      expect((await createBehavior("ctest_fp3")).statusCode).toBe(201);
+
+      const rejected = await publish({ expectedFingerprint: stale });
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json().error).toMatch(/draft changed/i);
+      // Nothing published
+      expect((await getDiff()).json().data.identical).toBe(false);
+
+      // Re-reviewing yields the current fingerprint; publish then succeeds
+      const fresh = (await getDiff()).json().data.fingerprint;
+      expect(fresh).not.toBe(stale);
+      const ok = await publish({ expectedFingerprint: fresh });
+      expect(ok.statusCode).toBe(201);
+    } finally {
       await restore();
     }
   });
