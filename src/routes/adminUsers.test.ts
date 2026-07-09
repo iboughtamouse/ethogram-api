@@ -127,9 +127,13 @@ describe("admin allowlist — add", () => {
       isActive: true,
     });
 
+    // Scope to THIS invitee's id, not the actor's whole add history — the
+    // actor authors an add row per test and beforeEach only sweeps invitee-
+    // authored rows, so an actor-wide count would grow with test order.
+    const newId = response.json().data.id;
     const audit = await query<{ action: string }>(
-      `SELECT action FROM audit_log WHERE admin_user_id = $1 AND action = 'add:admin_user'`,
-      [actorId],
+      `SELECT action FROM audit_log WHERE entity_id = $1 AND action = 'add:admin_user'`,
+      [newId],
     );
     expect(audit.rows.length).toBe(1);
   });
@@ -248,6 +252,21 @@ describe("admin allowlist — deactivate / reactivate", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toMatch(/your own access/);
     // Still active
+    const still = await query<{ is_active: boolean }>(
+      `SELECT is_active FROM admin_users WHERE id = $1`,
+      [actorId],
+    );
+    expect(still.rows[0]!.is_active).toBe(true);
+  });
+
+  it("still refuses self-removal when the id is uppercased (uuid is case-insensitive in pg)", async () => {
+    const response = await authed(
+      "PATCH",
+      `/api/admin/admin-users/${actorId.toUpperCase()}`,
+      { isActive: false },
+    );
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatch(/your own access/);
     const still = await query<{ is_active: boolean }>(
       `SELECT is_active FROM admin_users WHERE id = $1`,
       [actorId],

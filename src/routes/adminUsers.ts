@@ -131,10 +131,16 @@ export const adminUsersRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.patch("/admin-users/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    if (!UUID_PATTERN.test(id)) {
+    const rawId = (request.params as { id: string }).id;
+    if (!UUID_PATTERN.test(rawId)) {
       return fail(reply, 404, "No such admin");
     }
+    // Canonicalize to lowercase. Postgres compares the uuid type
+    // case-insensitively (so an uppercased id still resolves the right row),
+    // but the JS self-removal guard below uses ===, and adminUser.id is the
+    // pg-returned lowercase form — an uppercase path id would slip past the
+    // guard and let an admin lock themselves out.
+    const id = rawId.toLowerCase();
     const parsed = z.object({ isActive: z.boolean() }).safeParse(request.body);
     if (!parsed.success) {
       return fail(reply, 400, "Set isActive to true or false");
