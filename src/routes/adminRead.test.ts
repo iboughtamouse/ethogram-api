@@ -123,6 +123,10 @@ afterAll(async () => {
   await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [
     testUserId,
   ]);
+  // The attribution test publishes a version, which writes an audit_log row
+  // referencing this user — clear it before deleting the user (FK on
+  // audit_log.admin_user_id) so teardown doesn't 23503 on a fresh DB
+  await query(`DELETE FROM audit_log WHERE admin_user_id = $1`, [testUserId]);
   await query(`DELETE FROM admin_users WHERE email = $1`, [TEST_EMAIL]);
   await app.close();
   await closePool();
