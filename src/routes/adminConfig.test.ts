@@ -257,7 +257,8 @@ describe("POST /api/admin/config/publish", () => {
 
       const unconfirmed = await publish();
       expect(unconfirmed.statusCode).toBe(409);
-      expect(unconfirmed.json().flagChanges).toEqual(["flying"]);
+      // flagChanges carries the staff-facing behavior LABEL, not the wire value
+      expect(unconfirmed.json().flagChanges).toEqual(["Locomotion - Flying"]);
 
       const confirmed = await publish({ confirmFlagChanges: true });
       expect(confirmed.statusCode).toBe(201);
@@ -286,7 +287,7 @@ describe("POST /api/admin/config/publish", () => {
 
       const unconfirmed = await publish();
       expect(unconfirmed.statusCode).toBe(409);
-      expect(unconfirmed.json().rowMapChanges).toEqual(["flying"]);
+      expect(unconfirmed.json().rowMapChanges).toEqual(["Locomotion - Flying"]);
 
       const confirmed = await publish({ confirmRowMapChanges: true });
       expect(confirmed.statusCode).toBe(201);
