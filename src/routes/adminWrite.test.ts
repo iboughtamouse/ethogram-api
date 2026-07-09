@@ -1,45 +1,44 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { FastifyInstance } from 'fastify';
-import { buildApp } from '../app.js';
-import { query, closePool } from '../db/index.js';
-import { generateToken, hashToken } from '../utils/adminTokens.js';
-import { SESSION_COOKIE } from './admin.js';
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import type { FastifyInstance } from "fastify";
+import { buildApp } from "../app.js";
+import { query, closePool } from "../db/index.js";
+import { generateToken, hashToken } from "../utils/adminTokens.js";
+import { SESSION_COOKIE } from "./admin.js";
 
-const TEST_EMAIL = 'admin-write-test@example.com';
-const CSRF = { 'x-ethogram-admin': '1' };
-const AVIARY = 'wtest-aviary';
+const TEST_EMAIL = "admin-write-test@example.com";
+const CSRF = { "x-ethogram-admin": "1" };
+const AVIARY = "wtest-aviary";
 
 let app: FastifyInstance;
 let testUserId: string;
 let session: string;
 
-function authed(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) {
+function authed(
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
+  url: string,
+  payload?: unknown,
+) {
   return app.inject({
     method,
     url,
     headers: CSRF,
     cookies: { [SESSION_COOKIE]: session },
-    ...(payload !== undefined && { payload: payload as Record<string, unknown> }),
+    ...(payload !== undefined && {
+      payload: payload as Record<string, unknown>,
+    }),
   });
 }
 
-/** Remove everything this file may have created (also swept in beforeAll). */
+/** Remove everything this file may have created (also swept in beforeAll).
+ * Covers every wtest-* aviary (the clone tests create wtest-clone). */
 async function sweep(): Promise<void> {
-  await query(
-    `DELETE FROM aviary_behaviors WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`,
-    [AVIARY]
-  );
-  await query(
-    `DELETE FROM aviary_vocab_options WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`,
-    [AVIARY]
-  );
-  await query(`DELETE FROM subjects WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`, [
-    AVIARY,
-  ]);
-  await query(`DELETE FROM perches WHERE aviary_id IN (SELECT id FROM aviaries WHERE slug = $1)`, [
-    AVIARY,
-  ]);
-  await query(`DELETE FROM aviaries WHERE slug = $1`, [AVIARY]);
+  const owned = `(SELECT id FROM aviaries WHERE slug LIKE 'wtest-%')`;
+  await query(`DELETE FROM aviary_behaviors WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM aviary_vocab_options WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM aviary_perch_diagrams WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM subjects WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM perches WHERE aviary_id IN ${owned}`);
+  await query(`DELETE FROM aviaries WHERE slug LIKE 'wtest-%'`);
   await query(`DELETE FROM behaviors WHERE value LIKE 'wtest_%'`);
   await query(`DELETE FROM behavior_groups WHERE name LIKE 'WTest%'`);
   await query(`DELETE FROM vocab_options WHERE value LIKE 'wtest_%'`);
@@ -52,10 +51,12 @@ beforeAll(async () => {
   const user = await query<{ id: string }>(
     `INSERT INTO admin_users (email, display_name) VALUES ($1, 'Write Test Admin')
      ON CONFLICT (email) DO UPDATE SET is_active = true RETURNING id`,
-    [TEST_EMAIL]
+    [TEST_EMAIL],
   );
   testUserId = user.rows[0]!.id;
-  await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [testUserId]);
+  await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [
+    testUserId,
+  ]);
   // A run aborted before afterAll leaves audit rows behind; the audit-trail
   // assertions below need a clean slate for this user
   await query(`DELETE FROM audit_log WHERE admin_user_id = $1`, [testUserId]);
@@ -64,394 +65,663 @@ beforeAll(async () => {
   await query(
     `INSERT INTO admin_sessions (admin_user_id, token_hash, expires_at)
      VALUES ($1, $2, NOW() + interval '1 day')`,
-    [testUserId, hashToken(session)]
+    [testUserId, hashToken(session)],
   );
 });
 
 afterAll(async () => {
   await sweep();
   await query(`DELETE FROM audit_log WHERE admin_user_id = $1`, [testUserId]);
-  await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [testUserId]);
+  await query(`DELETE FROM admin_sessions WHERE admin_user_id = $1`, [
+    testUserId,
+  ]);
   await query(`DELETE FROM admin_users WHERE email = $1`, [TEST_EMAIL]);
   await app.close();
   await closePool();
 });
 
-describe('guard', () => {
-  it('rejects mutations without a session', async () => {
+describe("guard", () => {
+  it("rejects mutations without a session", async () => {
     const response = await app.inject({
-      method: 'POST',
-      url: '/api/admin/aviaries',
+      method: "POST",
+      url: "/api/admin/aviaries",
       headers: CSRF,
-      payload: { slug: 'nope', name: 'Nope' },
+      payload: { slug: "nope", name: "Nope" },
     });
     expect(response.statusCode).toBe(401);
   });
 
-  it('answers PATCH preflights — the editing UI is all PATCH mutations', async () => {
+  it("answers PATCH preflights — the editing UI is all PATCH mutations", async () => {
     const response = await app.inject({
-      method: 'OPTIONS',
-      url: '/api/admin/aviaries/sayyidas-cove',
+      method: "OPTIONS",
+      url: "/api/admin/aviaries/sayyidas-cove",
       headers: {
-        origin: 'http://localhost:5174',
-        'access-control-request-method': 'PATCH',
-        'access-control-request-headers': 'content-type,x-ethogram-admin',
+        origin: "http://localhost:5174",
+        "access-control-request-method": "PATCH",
+        "access-control-request-headers": "content-type,x-ethogram-admin",
       },
     });
     expect(response.statusCode).toBeLessThan(300);
-    expect(response.headers['access-control-allow-methods']).toContain('PATCH');
+    expect(response.headers["access-control-allow-methods"]).toContain("PATCH");
   });
 });
 
-describe('aviaries', () => {
-  it('creates, rejects duplicates, and audits', async () => {
-    const created = await authed('POST', '/api/admin/aviaries', {
+describe("aviaries", () => {
+  it("creates, rejects duplicates, and audits", async () => {
+    const created = await authed("POST", "/api/admin/aviaries", {
       slug: AVIARY,
-      name: 'WTest Aviary',
+      name: "WTest Aviary",
     });
     expect(created.statusCode).toBe(201);
+    // New aviaries start INACTIVE so a half-built one can't ride a publish into
+    // the observer form (the form filters to active aviaries)
+    expect(created.json().data.isActive).toBe(false);
+    const row = await query<{ is_active: boolean }>(
+      `SELECT is_active FROM aviaries WHERE slug = $1`,
+      [AVIARY],
+    );
+    expect(row.rows[0]!.is_active).toBe(false);
 
-    const duplicate = await authed('POST', '/api/admin/aviaries', {
+    const duplicate = await authed("POST", "/api/admin/aviaries", {
       slug: AVIARY,
-      name: 'Other Name',
+      name: "Other Name",
     });
     expect(duplicate.statusCode).toBe(409);
 
     const audit = await query(
       `SELECT id FROM audit_log WHERE admin_user_id = $1 AND entity = 'aviary' AND entity_id = $2 AND action = 'create'`,
-      [testUserId, AVIARY]
+      [testUserId, AVIARY],
     );
     expect(audit.rows).toHaveLength(1);
   });
 
-  it('rejects malformed slugs', async () => {
-    const response = await authed('POST', '/api/admin/aviaries', {
-      slug: 'Bad Slug!',
-      name: 'X',
+  it("rejects malformed slugs", async () => {
+    const response = await authed("POST", "/api/admin/aviaries", {
+      slug: "Bad Slug!",
+      name: "X",
     });
     expect(response.statusCode).toBe(400);
   });
 
-  it('updates name and active flag; 404s unknown slugs', async () => {
-    const updated = await authed('PATCH', `/api/admin/aviaries/${AVIARY}`, {
-      name: 'WTest Aviary Renamed',
+  it("clones perches and enablement (not subjects, not diagrams) from a template", async () => {
+    const created = await authed("POST", "/api/admin/aviaries", {
+      slug: "wtest-clone",
+      name: "WTest Clone",
+      cloneFrom: "sayyidas-cove",
+    });
+    expect(created.statusCode).toBe(201);
+    const { cloned } = created.json().data;
+
+    // Active perches only — the retired old-format specials don't propagate
+    const sourceActive = (
+      await query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM perches p JOIN aviaries a ON a.id = p.aviary_id
+         WHERE a.slug = 'sayyidas-cove' AND p.retired_at IS NULL`,
+      )
+    ).rows[0]!.count;
+    expect(String(cloned.perches)).toBe(sourceActive);
+    expect(cloned.behaviors).toBeGreaterThan(0);
+    expect(cloned.options).toBeGreaterThan(0);
+
+    const clone = await query<{
+      perches: string;
+      subjects: string;
+      diagrams: string;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::text FROM perches WHERE aviary_id = a.id) AS perches,
+         (SELECT COUNT(*)::text FROM subjects WHERE aviary_id = a.id) AS subjects,
+         (SELECT COUNT(*)::text FROM aviary_perch_diagrams WHERE aviary_id = a.id) AS diagrams
+       FROM aviaries a WHERE a.slug = 'wtest-clone'`,
+    );
+    expect(clone.rows[0]).toEqual({
+      perches: sourceActive,
+      subjects: "0",
+      diagrams: "0",
+    });
+  });
+
+  it("rejects cloning from an unknown aviary", async () => {
+    const response = await authed("POST", "/api/admin/aviaries", {
+      slug: "wtest-clone-2",
+      name: "WTest Clone 2",
+      cloneFrom: "nowhere",
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatch(/clone from/);
+  });
+
+  it("updates name and active flag; 404s unknown slugs", async () => {
+    const updated = await authed("PATCH", `/api/admin/aviaries/${AVIARY}`, {
+      name: "WTest Aviary Renamed",
       isActive: false,
     });
     expect(updated.statusCode).toBe(200);
-    expect(updated.json().data).toMatchObject({ name: 'WTest Aviary Renamed', isActive: false });
+    expect(updated.json().data).toMatchObject({
+      name: "WTest Aviary Renamed",
+      isActive: false,
+    });
 
-    expect((await authed('PATCH', '/api/admin/aviaries/nowhere', { name: 'X' })).statusCode).toBe(
-      404
-    );
+    expect(
+      (await authed("PATCH", "/api/admin/aviaries/nowhere", { name: "X" }))
+        .statusCode,
+    ).toBe(404);
   });
 });
 
-describe('perches', () => {
-  it('creates with a default sort order after the current max', async () => {
-    const first = await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
-      value: 'W1',
-      label: 'WTest Perch 1',
-    });
+describe("perches", () => {
+  it("creates with a default sort order after the current max", async () => {
+    const first = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/perches`,
+      {
+        value: "W1",
+        label: "WTest Perch 1",
+      },
+    );
     expect(first.statusCode).toBe(201);
-    await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
-      value: 'W2',
-      label: 'WTest Perch 2',
+    await authed("POST", `/api/admin/aviaries/${AVIARY}/perches`, {
+      value: "W2",
+      label: "WTest Perch 2",
     });
 
     const orders = await query<{ value: string; sort_order: number }>(
       `SELECT p.value, p.sort_order FROM perches p JOIN aviaries a ON a.id = p.aviary_id
        WHERE a.slug = $1 ORDER BY p.sort_order`,
-      [AVIARY]
+      [AVIARY],
     );
-    expect(orders.rows.map((r) => r.value)).toEqual(['W1', 'W2']);
-    expect(orders.rows[1]!.sort_order).toBeGreaterThan(orders.rows[0]!.sort_order);
+    expect(orders.rows.map((r) => r.value)).toEqual(["W1", "W2"]);
+    expect(orders.rows[1]!.sort_order).toBeGreaterThan(
+      orders.rows[0]!.sort_order,
+    );
   });
 
-  it('rejects duplicate values per aviary', async () => {
-    const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
-      value: 'W1',
-      label: 'Again',
-    });
+  it("rejects duplicate values per aviary", async () => {
+    const response = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/perches`,
+      {
+        value: "W1",
+        label: "Again",
+      },
+    );
     expect(response.statusCode).toBe(409);
   });
 
-  it('rejects values that cannot round-trip as a URL path segment', async () => {
+  it("rejects values that cannot round-trip as a URL path segment", async () => {
     // '.'/'..' are swallowed by path normalization and slashes split the
     // segment — such a perch could be created but never PATCHed or DELETEd
-    for (const value of ['.', '..', 'a/b', 'a\\b', 'zw\u200B']) {
-      const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
-        value,
-        label: 'Unaddressable',
-      });
+    for (const value of [".", "..", "a/b", "a\\b", "zw\u200B"]) {
+      const response = await authed(
+        "POST",
+        `/api/admin/aviaries/${AVIARY}/perches`,
+        {
+          value,
+          label: "Unaddressable",
+        },
+      );
       expect(response.statusCode, `value ${JSON.stringify(value)}`).toBe(400);
     }
   });
 
-  it('rejects sort orders beyond the integer column range', async () => {
-    const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/perches`, {
-      value: 'W9',
-      label: 'Overflow',
-      sortOrder: 2 ** 32,
-    });
+  it("rejects sort orders beyond the integer column range", async () => {
+    const response = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/perches`,
+      {
+        value: "W9",
+        label: "Overflow",
+        sortOrder: 2 ** 32,
+      },
+    );
     expect(response.statusCode).toBe(400);
   });
 
-  it('retires and unretires', async () => {
-    await authed('PATCH', `/api/admin/aviaries/${AVIARY}/perches/W2`, { retired: true });
+  it("retires and unretires", async () => {
+    await authed("PATCH", `/api/admin/aviaries/${AVIARY}/perches/W2`, {
+      retired: true,
+    });
     const retired = await query(
       `SELECT retired_at FROM perches p JOIN aviaries a ON a.id = p.aviary_id
        WHERE a.slug = $1 AND p.value = 'W2'`,
-      [AVIARY]
+      [AVIARY],
     );
     expect(retired.rows[0]!.retired_at).not.toBeNull();
 
-    await authed('PATCH', `/api/admin/aviaries/${AVIARY}/perches/W2`, { retired: false });
+    await authed("PATCH", `/api/admin/aviaries/${AVIARY}/perches/W2`, {
+      retired: false,
+    });
     const unretired = await query(
       `SELECT retired_at FROM perches p JOIN aviaries a ON a.id = p.aviary_id
        WHERE a.slug = $1 AND p.value = 'W2'`,
-      [AVIARY]
+      [AVIARY],
     );
     expect(unretired.rows[0]!.retired_at).toBeNull();
   });
 
-  it('deletes never-published perches but refuses published ones', async () => {
-    const deleted = await authed('DELETE', `/api/admin/aviaries/${AVIARY}/perches/W2`);
+  it("deletes never-published perches but refuses published ones", async () => {
+    const deleted = await authed(
+      "DELETE",
+      `/api/admin/aviaries/${AVIARY}/perches/W2`,
+    );
     expect(deleted.statusCode).toBe(200);
 
     // Perch "12" of Sayyida's Cove is in every published version
-    const refused = await authed('DELETE', '/api/admin/aviaries/sayyidas-cove/perches/12');
+    const refused = await authed(
+      "DELETE",
+      "/api/admin/aviaries/sayyidas-cove/perches/12",
+    );
     expect(refused.statusCode).toBe(409);
     expect(refused.json().error).toMatch(/retire it instead/);
   });
 });
 
-describe('subjects', () => {
-  it('rejects reserved generic names, case-insensitively (P2-D8)', async () => {
-    for (const name of ['Juvenile', 'juvenile', 'JUVENILE']) {
-      const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
-        name,
-        species: 'Barred Owl',
-        type: 'juvenile',
-        arrivedOn: '2026-07-01',
-      });
+describe("perch diagrams (replace-set)", () => {
+  // Attach only genuinely-minted URLs: mint through the real endpoint (which
+  // reserves the key + records the mint audit row the PUT guard checks)
+  async function mintUrl(label: string): Promise<string> {
+    const response = await authed("POST", "/api/admin/uploads/perch-diagram", {
+      aviary: AVIARY,
+      label,
+      contentType: "image/webp",
+    });
+    expect(response.statusCode).toBe(201);
+    return response.json().data.publicUrl;
+  }
+
+  it("replaces the set in submitted order, accepting only minted URLs", async () => {
+    const north = await mintUrl("North");
+    const south = await mintUrl("South");
+
+    const first = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [
+          { url: north, label: "North" },
+          { url: south, label: "South" },
+        ],
+      },
+    );
+    expect(first.statusCode).toBe(200);
+
+    // Reorder + relabel + drop one in a single replace
+    const second = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [{ url: south, label: "South (main)" }],
+      },
+    );
+    expect(second.statusCode).toBe(200);
+
+    const rows = await query<{
+      url: string;
+      label: string;
+      sort_order: number;
+    }>(
+      `SELECT d.url, d.label, d.sort_order FROM aviary_perch_diagrams d
+       JOIN aviaries a ON a.id = d.aviary_id WHERE a.slug = $1 ORDER BY d.sort_order`,
+      [AVIARY],
+    );
+    expect(rows.rows).toEqual([
+      { url: south, label: "South (main)", sort_order: 1 },
+    ]);
+  });
+
+  it("rejects duplicate labels", async () => {
+    const a = await mintUrl("Dup A");
+    const b = await mintUrl("Dup B");
+    const dupes = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [
+          { url: a, label: "Same" },
+          { url: b, label: "same" },
+        ],
+      },
+    );
+    expect(dupes.statusCode).toBe(400);
+    expect(dupes.json().error).toMatch(/unique/);
+  });
+
+  it("rejects URLs that were never minted (foreign host or grammar-valid but unminted)", async () => {
+    const foreign = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [{ url: "https://elsewhere.example/x.webp", label: "X" }],
+      },
+    );
+    expect(foreign.statusCode).toBe(400);
+    expect(foreign.json().error).toMatch(/not uploaded through/);
+
+    // Under the R2 base and grammar-valid, but no mint audit row exists for it
+    const ghost = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [
+          {
+            url: "https://pub-test.r2.dev/perch-diagram-wtest-aviary-ghost-v1.webp",
+            label: "Ghost",
+          },
+        ],
+      },
+    );
+    expect(ghost.statusCode).toBe(400);
+    expect(ghost.json().error).toMatch(/not uploaded through/);
+  });
+
+  it("rejects labels with invisible formatting characters", async () => {
+    const url = await mintUrl("Invisible");
+    const response = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [{ url, label: "Blank\u200Btab" }],
+      },
+    );
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("keeps an already-current URL editable even if it predates the upload base", async () => {
+    // A legacy row (different base, e.g. a migration-seeded diagram) is already
+    // current, so it bypasses the minted-URL check for relabel/reorder/remove
+    const legacy =
+      "https://pub-old.r2.dev/perch-diagram-wtest-aviary-legacy-v1.webp";
+    const aviaryId = (
+      await query<{ id: string }>(`SELECT id FROM aviaries WHERE slug = $1`, [
+        AVIARY,
+      ])
+    ).rows[0]!.id;
+    await query(
+      `INSERT INTO aviary_perch_diagrams (aviary_id, url, label, sort_order)
+       VALUES ($1, $2, 'Legacy', 50)`,
+      [aviaryId, legacy],
+    );
+
+    const relabel = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [{ url: legacy, label: "Legacy (kept)" }],
+      },
+    );
+    expect(relabel.statusCode).toBe(200);
+  });
+});
+
+describe("subjects", () => {
+  it("rejects reserved generic names, case-insensitively (P2-D8)", async () => {
+    for (const name of ["Juvenile", "juvenile", "JUVENILE"]) {
+      const response = await authed(
+        "POST",
+        `/api/admin/aviaries/${AVIARY}/subjects`,
+        {
+          name,
+          species: "Barred Owl",
+          type: "juvenile",
+          arrivedOn: "2026-07-01",
+        },
+      );
       expect(response.statusCode).toBe(400);
       expect(response.json().error).toMatch(/reserved/);
     }
   });
 
-  it('rejects names that fail the Excel sheet-name round-trip', async () => {
-    for (const name of ['Bad[Name]', 'History', "'Quoted'", 'X'.repeat(29)]) {
-      const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
-        name,
-        species: 'Barred Owl',
-        type: 'juvenile',
-        arrivedOn: '2026-07-01',
-      });
+  it("rejects names that fail the Excel sheet-name round-trip", async () => {
+    for (const name of ["Bad[Name]", "History", "'Quoted'", "X".repeat(29)]) {
+      const response = await authed(
+        "POST",
+        `/api/admin/aviaries/${AVIARY}/subjects`,
+        {
+          name,
+          species: "Barred Owl",
+          type: "juvenile",
+          arrivedOn: "2026-07-01",
+        },
+      );
       expect(response.statusCode).toBe(400);
     }
   });
 
-  it('rejects names with control or invisible formatting characters', async () => {
+  it("rejects names with control or invisible formatting characters", async () => {
     // A zero-width space inside "Juvenile" renders identically to the
     // reserved generic literal but compares as a different string
-    for (const name of ['Juv\u200Benile', 'Bell\u0007', 'Soft\u00ADHyphen', 'Word\u2060Joiner']) {
-      const response = await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
-        name,
-        species: 'Barred Owl',
-        type: 'juvenile',
-        arrivedOn: '2026-07-01',
-      });
+    for (const name of [
+      "Juv\u200Benile",
+      "Bell\u0007",
+      "Soft\u00ADHyphen",
+      "Word\u2060Joiner",
+    ]) {
+      const response = await authed(
+        "POST",
+        `/api/admin/aviaries/${AVIARY}/subjects`,
+        {
+          name,
+          species: "Barred Owl",
+          type: "juvenile",
+          arrivedOn: "2026-07-01",
+        },
+      );
       expect(response.statusCode, `name ${JSON.stringify(name)}`).toBe(400);
     }
   });
 
-  it('creates an episode and rejects overlapping ones with a friendly message', async () => {
-    const created = await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
-      name: 'WTest Bird',
-      species: 'Barred Owl',
-      type: 'juvenile',
-      arrivedOn: '2026-07-01',
-    });
+  it("creates an episode and rejects overlapping ones with a friendly message", async () => {
+    const created = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/subjects`,
+      {
+        name: "WTest Bird",
+        species: "Barred Owl",
+        type: "juvenile",
+        arrivedOn: "2026-07-01",
+      },
+    );
     expect(created.statusCode).toBe(201);
 
-    const overlap = await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
-      name: 'WTest Bird',
-      species: 'Barred Owl',
-      type: 'juvenile',
-      arrivedOn: '2026-07-15',
-    });
+    const overlap = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/subjects`,
+      {
+        name: "WTest Bird",
+        species: "Barred Owl",
+        type: "juvenile",
+        arrivedOn: "2026-07-15",
+      },
+    );
     expect(overlap.statusCode).toBe(409);
     expect(overlap.json().error).toMatch(/overlapping/);
   });
 
-  it('records departures and rejects impossible ones', async () => {
+  it("records departures and rejects impossible ones", async () => {
     const id = (
       await query<{ id: string }>(
         `SELECT s.id FROM subjects s JOIN aviaries a ON a.id = s.aviary_id
          WHERE a.slug = $1 AND s.name = 'WTest Bird'`,
-        [AVIARY]
+        [AVIARY],
       )
     ).rows[0]!.id;
 
-    const tooEarly = await authed('PATCH', `/api/admin/subjects/${id}`, {
-      departedOn: '2026-06-01',
+    const tooEarly = await authed("PATCH", `/api/admin/subjects/${id}`, {
+      departedOn: "2026-06-01",
     });
     expect(tooEarly.statusCode).toBe(400);
 
-    const departed = await authed('PATCH', `/api/admin/subjects/${id}`, {
-      departedOn: '2026-07-20',
+    const departed = await authed("PATCH", `/api/admin/subjects/${id}`, {
+      departedOn: "2026-07-20",
     });
     expect(departed.statusCode).toBe(200);
   });
 
-  it('change-type closes the open episode and opens a new one', async () => {
-    await authed('POST', `/api/admin/aviaries/${AVIARY}/subjects`, {
-      name: 'WTest Changer',
-      species: 'Barred Owl',
-      type: 'baby',
-      arrivedOn: '2026-07-01',
+  it("change-type closes the open episode and opens a new one", async () => {
+    await authed("POST", `/api/admin/aviaries/${AVIARY}/subjects`, {
+      name: "WTest Changer",
+      species: "Barred Owl",
+      type: "baby",
+      arrivedOn: "2026-07-01",
     });
     const id = (
       await query<{ id: string }>(
         `SELECT s.id FROM subjects s JOIN aviaries a ON a.id = s.aviary_id
          WHERE a.slug = $1 AND s.name = 'WTest Changer' AND s.departed_on IS NULL`,
-        [AVIARY]
+        [AVIARY],
       )
     ).rows[0]!.id;
 
-    const changed = await authed('POST', `/api/admin/subjects/${id}/change-type`, {
-      newType: 'juvenile',
-      effectiveOn: '2026-07-10',
-    });
+    const changed = await authed(
+      "POST",
+      `/api/admin/subjects/${id}/change-type`,
+      {
+        newType: "juvenile",
+        effectiveOn: "2026-07-10",
+      },
+    );
     expect(changed.statusCode).toBe(200);
 
-    const episodes = await query<{ subject_type: string; departed_on: string | null }>(
+    const episodes = await query<{
+      subject_type: string;
+      departed_on: string | null;
+    }>(
       `SELECT s.subject_type, s.departed_on FROM subjects s JOIN aviaries a ON a.id = s.aviary_id
        WHERE a.slug = $1 AND s.name = 'WTest Changer' ORDER BY s.arrived_on`,
-      [AVIARY]
+      [AVIARY],
     );
     expect(episodes.rows).toHaveLength(2);
-    expect(episodes.rows[0]).toMatchObject({ subject_type: 'baby' });
+    expect(episodes.rows[0]).toMatchObject({ subject_type: "baby" });
     expect(episodes.rows[0]!.departed_on).not.toBeNull();
-    expect(episodes.rows[1]).toMatchObject({ subject_type: 'juvenile', departed_on: null });
+    expect(episodes.rows[1]).toMatchObject({
+      subject_type: "juvenile",
+      departed_on: null,
+    });
 
     // Closed episode can't change type again; same type is a 400
     const closedId = (
       await query<{ id: string }>(
         `SELECT s.id FROM subjects s JOIN aviaries a ON a.id = s.aviary_id
          WHERE a.slug = $1 AND s.name = 'WTest Changer' AND s.departed_on IS NOT NULL`,
-        [AVIARY]
+        [AVIARY],
       )
     ).rows[0]!.id;
     expect(
       (
-        await authed('POST', `/api/admin/subjects/${closedId}/change-type`, {
-          newType: 'foster_parent',
-          effectiveOn: '2026-07-12',
+        await authed("POST", `/api/admin/subjects/${closedId}/change-type`, {
+          newType: "foster_parent",
+          effectiveOn: "2026-07-12",
         })
-      ).statusCode
+      ).statusCode,
     ).toBe(409);
   });
 
-  it('deletes never-published episodes but refuses published ones', async () => {
+  it("deletes never-published episodes but refuses published ones", async () => {
     const draftId = (
       await query<{ id: string }>(
         `SELECT s.id FROM subjects s JOIN aviaries a ON a.id = s.aviary_id
          WHERE a.slug = $1 AND s.name = 'WTest Bird'`,
-        [AVIARY]
+        [AVIARY],
       )
     ).rows[0]!.id;
-    expect((await authed('DELETE', `/api/admin/subjects/${draftId}`)).statusCode).toBe(200);
+    expect(
+      (await authed("DELETE", `/api/admin/subjects/${draftId}`)).statusCode,
+    ).toBe(200);
 
     const sayyidaId = (
-      await query<{ id: string }>(`SELECT id FROM subjects WHERE name = 'Sayyida'`)
+      await query<{ id: string }>(
+        `SELECT id FROM subjects WHERE name = 'Sayyida'`,
+      )
     ).rows[0]!.id;
-    const refused = await authed('DELETE', `/api/admin/subjects/${sayyidaId}`);
+    const refused = await authed("DELETE", `/api/admin/subjects/${sayyidaId}`);
     expect(refused.statusCode).toBe(409);
     expect(refused.json().error).toMatch(/departure instead/);
   });
 });
 
-describe('behaviors and groups', () => {
-  it('requires an existing group and every mandated field', async () => {
-    const missingFields = await authed('POST', '/api/admin/behaviors', {
-      value: 'wtest_partial',
-      label: 'Partial',
+describe("behaviors and groups", () => {
+  it("requires an existing group and every mandated field", async () => {
+    const missingFields = await authed("POST", "/api/admin/behaviors", {
+      value: "wtest_partial",
+      label: "Partial",
     });
     expect(missingFields.statusCode).toBe(400);
 
-    const unknownGroup = await authed('POST', '/api/admin/behaviors', {
-      value: 'wtest_lost',
-      label: 'Lost',
-      group: 'No Such Group',
+    const unknownGroup = await authed("POST", "/api/admin/behaviors", {
+      value: "wtest_lost",
+      label: "Lost",
+      group: "No Such Group",
       requiresLocation: false,
       requiresObject: false,
       requiresObjectInteraction: false,
       requiresAnimal: false,
       requiresAnimalInteraction: false,
       requiresDescription: false,
-      excelRowLabel: 'Lost',
+      excelRowLabel: "Lost",
     });
     expect(unknownGroup.statusCode).toBe(400);
     expect(unknownGroup.json().error).toMatch(/create it first/);
   });
 
-  it('creates groups and behaviors; insertAfter shifts the Excel row map', async () => {
+  it("creates groups and behaviors; insertAfter shifts the Excel row map", async () => {
     expect(
       (
-        await authed('POST', '/api/admin/behavior-groups', { name: 'WTest Group', sortOrder: 99 })
-      ).statusCode
+        await authed("POST", "/api/admin/behavior-groups", {
+          name: "WTest Group",
+          sortOrder: 99,
+        })
+      ).statusCode,
     ).toBe(201);
 
-    const appended = await authed('POST', '/api/admin/behaviors', {
-      value: 'wtest_appended',
-      label: 'WTest Appended',
-      group: 'WTest Group',
+    const appended = await authed("POST", "/api/admin/behaviors", {
+      value: "wtest_appended",
+      label: "WTest Appended",
+      group: "WTest Group",
       requiresLocation: true,
       requiresObject: false,
       requiresObjectInteraction: false,
       requiresAnimal: false,
       requiresAnimalInteraction: false,
       requiresDescription: false,
-      excelRowLabel: 'WTest Appended',
+      excelRowLabel: "WTest Appended",
     });
     expect(appended.statusCode).toBe(201);
 
     const maxOrder = (
       await query<{ excel_row_order: number }>(
-        `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_appended'`
+        `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_appended'`,
       )
     ).rows[0]!.excel_row_order;
     const others = await query<{ max: number }>(
-      `SELECT MAX(excel_row_order) AS max FROM behaviors WHERE value <> 'wtest_appended'`
+      `SELECT MAX(excel_row_order) AS max FROM behaviors WHERE value <> 'wtest_appended'`,
     );
     expect(maxOrder).toBe(others.rows[0]!.max + 1);
 
     // insertAfter: lands right after the anchor; everything below shifts down
     const anchorBefore = (
       await query<{ excel_row_order: number }>(
-        `SELECT excel_row_order FROM behaviors WHERE value = 'flying'`
+        `SELECT excel_row_order FROM behaviors WHERE value = 'flying'`,
       )
     ).rows[0]!.excel_row_order;
     try {
-      const inserted = await authed('POST', '/api/admin/behaviors', {
-        value: 'wtest_inserted',
-        label: 'WTest Inserted',
-        group: 'WTest Group',
+      const inserted = await authed("POST", "/api/admin/behaviors", {
+        value: "wtest_inserted",
+        label: "WTest Inserted",
+        group: "WTest Group",
         requiresLocation: false,
         requiresObject: false,
         requiresObjectInteraction: false,
         requiresAnimal: false,
         requiresAnimalInteraction: false,
         requiresDescription: false,
-        excelRowLabel: 'WTest Inserted',
-        insertAfter: 'flying',
+        excelRowLabel: "WTest Inserted",
+        insertAfter: "flying",
       });
       expect(inserted.statusCode).toBe(201);
 
       const insertedOrder = (
         await query<{ excel_row_order: number }>(
-          `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_inserted'`
+          `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_inserted'`,
         )
       ).rows[0]!.excel_row_order;
       expect(insertedOrder).toBe(anchorBefore + 1);
@@ -460,189 +730,221 @@ describe('behaviors and groups', () => {
       // the insertAfter shift touches EVERY seed behavior at/after the anchor,
       // and sweep() alone cannot unshift them
       const leftover = await query<{ excel_row_order: number }>(
-        `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_inserted'`
+        `SELECT excel_row_order FROM behaviors WHERE value = 'wtest_inserted'`,
       );
       if (leftover.rows[0]) {
         await query(`DELETE FROM behaviors WHERE value = 'wtest_inserted'`);
         await query(
           `UPDATE behaviors SET excel_row_order = excel_row_order - 1 WHERE excel_row_order > $1`,
-          [leftover.rows[0].excel_row_order]
+          [leftover.rows[0].excel_row_order],
         );
       }
     }
     const anchorAfter = (
       await query<{ excel_row_order: number }>(
-        `SELECT excel_row_order FROM behaviors WHERE value = 'flying'`
+        `SELECT excel_row_order FROM behaviors WHERE value = 'flying'`,
       )
     ).rows[0]!.excel_row_order;
     expect(anchorAfter).toBe(anchorBefore);
   });
 
-  it('patches labels and retirement', async () => {
-    const patched = await authed('PATCH', '/api/admin/behaviors/wtest_appended', {
-      label: 'WTest Appended (fixed)',
-      retired: true,
-    });
+  it("patches labels and retirement", async () => {
+    const patched = await authed(
+      "PATCH",
+      "/api/admin/behaviors/wtest_appended",
+      {
+        label: "WTest Appended (fixed)",
+        retired: true,
+      },
+    );
     expect(patched.statusCode).toBe(200);
     const row = await query<{ label: string; retired_at: string | null }>(
-      `SELECT label, retired_at FROM behaviors WHERE value = 'wtest_appended'`
+      `SELECT label, retired_at FROM behaviors WHERE value = 'wtest_appended'`,
     );
-    expect(row.rows[0]!.label).toBe('WTest Appended (fixed)');
+    expect(row.rows[0]!.label).toBe("WTest Appended (fixed)");
     expect(row.rows[0]!.retired_at).not.toBeNull();
   });
 
-  it('deletes never-published behaviors but refuses published ones', async () => {
-    expect((await authed('DELETE', '/api/admin/behaviors/wtest_appended')).statusCode).toBe(200);
+  it("deletes never-published behaviors but refuses published ones", async () => {
+    expect(
+      (await authed("DELETE", "/api/admin/behaviors/wtest_appended"))
+        .statusCode,
+    ).toBe(200);
 
-    const refused = await authed('DELETE', '/api/admin/behaviors/flying');
+    const refused = await authed("DELETE", "/api/admin/behaviors/flying");
     expect(refused.statusCode).toBe(409);
   });
 });
 
-describe('vocab options', () => {
-  it('creates, patches, and enforces the published-delete rule', async () => {
+describe("vocab options", () => {
+  it("creates, patches, and enforces the published-delete rule", async () => {
     expect(
       (
-        await authed('POST', '/api/admin/options', {
-          kind: 'object',
-          value: 'wtest_toy',
-          label: 'WTest Toy',
+        await authed("POST", "/api/admin/options", {
+          kind: "object",
+          value: "wtest_toy",
+          label: "WTest Toy",
         })
-      ).statusCode
+      ).statusCode,
     ).toBe(201);
     expect(
       (
-        await authed('POST', '/api/admin/options', {
-          kind: 'object',
-          value: 'wtest_toy',
-          label: 'Again',
+        await authed("POST", "/api/admin/options", {
+          kind: "object",
+          value: "wtest_toy",
+          label: "Again",
         })
-      ).statusCode
+      ).statusCode,
     ).toBe(409);
 
     expect(
       (
-        await authed('PATCH', '/api/admin/options/object/wtest_toy', { retired: true })
-      ).statusCode
+        await authed("PATCH", "/api/admin/options/object/wtest_toy", {
+          retired: true,
+        })
+      ).statusCode,
     ).toBe(200);
 
-    expect((await authed('DELETE', '/api/admin/options/object/wtest_toy')).statusCode).toBe(200);
+    expect(
+      (await authed("DELETE", "/api/admin/options/object/wtest_toy"))
+        .statusCode,
+    ).toBe(200);
 
     const publishedValue = (
-      await query<{ value: string }>(`SELECT value FROM vocab_options WHERE kind = 'animal' LIMIT 1`)
+      await query<{ value: string }>(
+        `SELECT value FROM vocab_options WHERE kind = 'animal' LIMIT 1`,
+      )
     ).rows[0]!.value;
-    const refused = await authed('DELETE', `/api/admin/options/animal/${publishedValue}`);
+    const refused = await authed(
+      "DELETE",
+      `/api/admin/options/animal/${publishedValue}`,
+    );
     expect(refused.statusCode).toBe(409);
   });
 });
 
-describe('enablement', () => {
-  it('rejects unknown values without touching the junctions', async () => {
-    const response = await authed('PUT', `/api/admin/aviaries/${AVIARY}/enablement`, {
-      behaviors: ['flying', 'not_a_behavior'],
-      object: [],
-      object_interaction: [],
-      animal: [],
-      animal_interaction: [],
-    });
+describe("enablement", () => {
+  it("rejects unknown values without touching the junctions", async () => {
+    const response = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/enablement`,
+      {
+        behaviors: ["flying", "not_a_behavior"],
+        object: [],
+        object_interaction: [],
+        animal: [],
+        animal_interaction: [],
+      },
+    );
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toMatch(/not_a_behavior/);
 
     const untouched = await query(
       `SELECT 1 FROM aviary_behaviors ab JOIN aviaries a ON a.id = ab.aviary_id WHERE a.slug = $1`,
-      [AVIARY]
+      [AVIARY],
     );
     expect(untouched.rows).toHaveLength(0);
   });
 
-  it('replaces the enablement set atomically', async () => {
+  it("replaces the enablement set atomically", async () => {
     const objectValue = (
       await query<{ value: string }>(
-        `SELECT value FROM vocab_options WHERE kind = 'object' LIMIT 1`
+        `SELECT value FROM vocab_options WHERE kind = 'object' LIMIT 1`,
       )
     ).rows[0]!.value;
 
-    const response = await authed('PUT', `/api/admin/aviaries/${AVIARY}/enablement`, {
-      behaviors: ['flying', 'resting_alert'],
-      object: [objectValue],
-      object_interaction: [],
-      animal: [],
-      animal_interaction: [],
-    });
+    const response = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/enablement`,
+      {
+        behaviors: ["flying", "resting_alert"],
+        object: [objectValue],
+        object_interaction: [],
+        animal: [],
+        animal_interaction: [],
+      },
+    );
     expect(response.statusCode).toBe(200);
 
     const behaviors = await query(
       `SELECT b.value FROM aviary_behaviors ab
        JOIN aviaries a ON a.id = ab.aviary_id JOIN behaviors b ON b.id = ab.behavior_id
        WHERE a.slug = $1`,
-      [AVIARY]
+      [AVIARY],
     );
     expect(behaviors.rows).toHaveLength(2);
 
     // Sayyida's Cove is untouched
     const sayyidas = await query(
       `SELECT 1 FROM aviary_behaviors ab JOIN aviaries a ON a.id = ab.aviary_id
-       WHERE a.slug = 'sayyidas-cove'`
+       WHERE a.slug = 'sayyidas-cove'`,
     );
     expect(sayyidas.rows).toHaveLength(23);
   });
 
-  it('truly REPLACES the set — a second PUT removes everything the first enabled', async () => {
-    const second = await authed('PUT', `/api/admin/aviaries/${AVIARY}/enablement`, {
-      behaviors: ['resting_alert'],
-      object: [],
-      object_interaction: [],
-      animal: [],
-      animal_interaction: [],
-    });
+  it("truly REPLACES the set — a second PUT removes everything the first enabled", async () => {
+    const second = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/enablement`,
+      {
+        behaviors: ["resting_alert"],
+        object: [],
+        object_interaction: [],
+        animal: [],
+        animal_interaction: [],
+      },
+    );
     expect(second.statusCode).toBe(200);
 
     const behaviors = await query<{ value: string }>(
       `SELECT b.value FROM aviary_behaviors ab
        JOIN aviaries a ON a.id = ab.aviary_id JOIN behaviors b ON b.id = ab.behavior_id
        WHERE a.slug = $1`,
-      [AVIARY]
+      [AVIARY],
     );
-    expect(behaviors.rows.map((r) => r.value)).toEqual(['resting_alert']);
+    expect(behaviors.rows.map((r) => r.value)).toEqual(["resting_alert"]);
 
     const options = await query(
       `SELECT 1 FROM aviary_vocab_options av JOIN aviaries a ON a.id = av.aviary_id
        WHERE a.slug = $1`,
-      [AVIARY]
+      [AVIARY],
     );
     expect(options.rows).toHaveLength(0);
   });
 });
 
-describe('audit trail (P3-D5)', () => {
+describe("audit trail (P3-D5)", () => {
   // Runs last: by now every mutation flavor above has fired at least once,
   // so a route that stopped writing its audit row fails here
-  it('has an attributed row for every mutation flavor exercised by this file', async () => {
+  it("has an attributed row for every mutation flavor exercised by this file", async () => {
     const rows = await query<{ action: string; entity: string }>(
       `SELECT DISTINCT action, entity FROM audit_log WHERE admin_user_id = $1`,
-      [testUserId]
+      [testUserId],
     );
     const have = new Set(rows.rows.map((r) => `${r.action}:${r.entity}`));
     for (const expected of [
-      'create:aviary',
-      'update:aviary',
-      'create:perch',
-      'update:perch',
-      'delete:perch',
-      'create:subject',
-      'update:subject',
-      'change_type:subject',
-      'delete:subject',
-      'create:behavior_group',
-      'create:behavior',
-      'update:behavior',
-      'delete:behavior',
-      'create:vocab_option',
-      'update:vocab_option',
-      'delete:vocab_option',
-      'set_enablement:aviary',
+      "create:aviary",
+      "update:aviary",
+      "create:perch",
+      "update:perch",
+      "delete:perch",
+      "create:subject",
+      "update:subject",
+      "change_type:subject",
+      "delete:subject",
+      "create:behavior_group",
+      "create:behavior",
+      "update:behavior",
+      "delete:behavior",
+      "create:vocab_option",
+      "update:vocab_option",
+      "delete:vocab_option",
+      "set_enablement:aviary",
+      "set_diagrams:aviary",
     ]) {
-      expect(have.has(expected), `missing audit row for ${expected}`).toBe(true);
+      expect(have.has(expected), `missing audit row for ${expected}`).toBe(
+        true,
+      );
     }
   });
 });

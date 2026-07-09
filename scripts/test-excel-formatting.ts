@@ -13,7 +13,6 @@ const testData = {
     endTime: '14:30',
     aviary: "Sayyida's Cove",
     patient: 'Sayyida',
-    mode: 'live' as const,
   },
   observations: {
     '14:00': [

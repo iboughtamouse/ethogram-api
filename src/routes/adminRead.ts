@@ -288,7 +288,6 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
         startTime: string;
         endTime: string;
         observerName: string;
-        mode: string;
         aviarySlug: string | null;
         aviaryName: string;
         slotCount: number;
@@ -296,7 +295,7 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
         `SELECT o.id, o.submitted_at AS "submittedAt",
                 o.observation_date::text AS "observationDate",
                 o.start_time::text AS "startTime", o.end_time::text AS "endTime",
-                o.observer_name AS "observerName", o.mode,
+                o.observer_name AS "observerName",
                 a.slug AS "aviarySlug", COALESCE(a.name, o.aviary) AS "aviaryName",
                 (SELECT COUNT(*)::int FROM jsonb_object_keys(o.time_slots)) AS "slotCount"
          ${fromSql}

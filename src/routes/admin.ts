@@ -19,6 +19,7 @@ import { sendAdminLoginEmail } from '../services/email.js';
 import { adminReadRoutes } from './adminRead.js';
 import { adminWriteRoutes } from './adminWrite.js';
 import { adminConfigRoutes } from './adminConfig.js';
+import { adminUploadsRoutes } from './adminUploads.js';
 
 export const SESSION_COOKIE = 'ethogram_admin_session';
 
@@ -325,6 +326,9 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     // Stage 3C: editing (CRUD over the draft tables) + the publish gate
     await guarded.register(adminWriteRoutes);
     await guarded.register(adminConfigRoutes);
+
+    // Stage 3D: presigned perch-diagram uploads
+    await guarded.register(adminUploadsRoutes);
 
     guarded.get('/me', async (request, reply) => {
       const { email, displayName } = request.adminUser!;
