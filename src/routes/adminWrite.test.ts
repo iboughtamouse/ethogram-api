@@ -271,6 +271,33 @@ describe("aviaries", () => {
     ).toHaveLength(1);
   });
 
+  it("tells an already-inactive published aviary it's already deactivated, not to deactivate", async () => {
+    // Create it (inactive by default), then freeze its slug into a published
+    // version WITHOUT activating — attributed to this test's admin so it stays
+    // out of adminConfig.test's NULL-published_by baseline
+    const created = await authed("POST", "/api/admin/aviaries", {
+      slug: "wtest-pub",
+      name: "WTest Pub",
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().data.isActive).toBe(false);
+    const version = await query<{ id: number }>(
+      `INSERT INTO config_versions (config, published_by)
+       VALUES ('{"aviaries":[{"slug":"wtest-pub"}]}'::jsonb, $1) RETURNING id`,
+      [testUserId],
+    );
+    try {
+      const del = await authed("DELETE", "/api/admin/aviaries/wtest-pub");
+      expect(del.statusCode).toBe(409);
+      expect(del.json().error).toMatch(/already deactivated/);
+      expect(del.json().error).not.toMatch(/deactivate it instead/);
+    } finally {
+      await query(`DELETE FROM config_versions WHERE id = $1`, [
+        version.rows[0]!.id,
+      ]);
+    }
+  });
+
   it("refuses to delete a draft aviary that has observations", async () => {
     const created = await authed("POST", "/api/admin/aviaries", {
       slug: "wtest-obs",

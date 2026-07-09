@@ -127,9 +127,9 @@ async function lockAgainstPublish(client: PoolClient): Promise<void> {
 
 async function aviaryBySlug(
   slug: string,
-): Promise<{ id: string; slug: string } | null> {
-  const result = await query<{ id: string; slug: string }>(
-    `SELECT id, slug FROM aviaries WHERE slug = $1`,
+): Promise<{ id: string; slug: string; isActive: boolean } | null> {
+  const result = await query<{ id: string; slug: string; isActive: boolean }>(
+    `SELECT id, slug, is_active AS "isActive" FROM aviaries WHERE slug = $1`,
     [slug],
   );
   return result.rows[0] ?? null;
@@ -370,7 +370,10 @@ export const adminWriteRoutes: FastifyPluginAsync = async (app) => {
         return fail(
           reply,
           409,
-          "This aviary is in a published config version and can't be deleted — deactivate it instead",
+          // Don't tell an already-inactive aviary to "deactivate it instead"
+          aviary.isActive
+            ? "This aviary is in a published config version and can't be deleted — deactivate it instead"
+            : "This aviary is in a published config version and can't be deleted — it's already deactivated and hidden from observers",
         );
       }
       if (outcome === "hasObservations") {
