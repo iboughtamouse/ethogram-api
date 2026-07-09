@@ -126,7 +126,6 @@ const submitObservationSchema = z.object({
       // The aviary slug (P2-D4). Unknown values pass through warn-only —
       // a client on a stale snapshot must never lose data over it.
       aviary: z.string(),
-      mode: z.enum(['live', 'vod']),
     }).refine(
       (data) => data.endTime > data.startTime,
       { message: 'End time must be after start time', path: ['endTime'] }
@@ -160,7 +159,6 @@ interface ObservationRow {
   start_time: string;
   end_time: string;
   aviary: string;
-  mode: string;
   time_slots: Record<string, SubjectObservation[]>;
   submitted_at: string;
   config_version_id: number | null;
@@ -174,7 +172,6 @@ interface ObservationMetadata {
   endTime: string;
   aviary: string;
   patient: string;
-  mode: 'live' | 'vod';
 }
 
 // Shape of a Postgres uuid column value — anything else can't match a row
@@ -197,7 +194,7 @@ async function fetchObservationById(id: string): Promise<{
   }
 
   const result = await query<ObservationRow>(
-    `SELECT id, observer_name, observation_date, start_time, end_time, aviary, mode, time_slots, submitted_at, config_version_id
+    `SELECT id, observer_name, observation_date, start_time, end_time, aviary, time_slots, submitted_at, config_version_id
      FROM observations WHERE id = $1`,
     [id]
   );
@@ -226,7 +223,6 @@ async function fetchObservationById(id: string): Promise<{
     endTime: row.end_time.slice(0, 5),
     aviary: row.aviary,
     patient,
-    mode: row.mode as 'live' | 'vod',
   };
 
   return { row, metadata };
@@ -391,13 +387,12 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           start_time,
           end_time,
           aviary,
-          mode,
           time_slots,
           emails,
           submitted_at,
           aviary_id,
           config_version_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id`,
         [
           metadata.observerName,
@@ -405,7 +400,6 @@ export const observationsRoutes: FastifyPluginAsync = async (fastify) => {
           metadata.startTime,
           metadata.endTime,
           aviaryName,
-          metadata.mode,
           JSON.stringify(timeSlots),
           emails ?? null,
           submittedAt,

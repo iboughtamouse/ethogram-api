@@ -11,7 +11,6 @@ const sampleObservation = {
     endTime: '10:30',
     aviary: "Sayyida's Cove",
     patient: 'Sayyida',
-    mode: 'live' as const,
   },
   observations: {
     '10:00': [
@@ -348,7 +347,6 @@ describe('Excel Service', () => {
           endTime: '00:10',
           aviary: "Sayyida's Cove",
           patient: 'Sayyida',
-          mode: 'live' as const,
         },
         observations: {
           '23:50': [
@@ -481,7 +479,6 @@ describe('Excel Service', () => {
         endTime: '10:10',
         aviary: "Sayyida's Cove",
         patient: 'Sayyida, Juvenile 1',
-        mode: 'live' as const,
       },
       observations: {
         '10:00': [
