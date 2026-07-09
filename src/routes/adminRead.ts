@@ -8,12 +8,17 @@
  * Design: ethogram-notes/01-ACTIVE/config-as-data-phase3-design.md §5.
  */
 
-import type { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
-import { query } from '../db/index.js';
-import { isoDate } from '../utils/isoDate.js';
+import type { FastifyPluginAsync } from "fastify";
+import { z } from "zod";
+import { query } from "../db/index.js";
+import { isoDate } from "../utils/isoDate.js";
 
-const VOCAB_KINDS = ['object', 'object_interaction', 'animal', 'animal_interaction'] as const;
+const VOCAB_KINDS = [
+  "object",
+  "object_interaction",
+  "animal",
+  "animal_interaction",
+] as const;
 
 const submissionsQuerySchema = z.object({
   from: isoDate.optional(),
@@ -28,7 +33,7 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
   // ---------------------------------------------------------------------------
   // GET /overview — aviary cards + latest published version + unpublished flag
   // ---------------------------------------------------------------------------
-  app.get('/overview', async (_request, reply) => {
+  app.get("/overview", async (_request, reply) => {
     const [aviaries, latest, unpublished] = await Promise.all([
       query<{
         slug: string;
@@ -48,17 +53,17 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
                 (SELECT COUNT(*)::int FROM aviary_perch_diagrams d
                  WHERE d.aviary_id = a.id) AS diagrams
          FROM aviaries a
-         ORDER BY a.name`
+         ORDER BY a.name`,
       ),
       query<{ version: number; publishedAt: string; notes: string | null }>(
         `SELECT id AS version, published_at AS "publishedAt", notes
-         FROM config_versions ORDER BY id DESC LIMIT 1`
+         FROM config_versions ORDER BY id DESC LIMIT 1`,
       ),
       // Same comparison the publish idempotency checks use (migrations 005/006):
       // any drift between the editing tables and the latest snapshot
       query<{ changed: boolean }>(
         `SELECT compose_config() IS DISTINCT FROM
-                (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS changed`
+                (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS changed`,
       ),
     ]);
 
@@ -75,88 +80,116 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
   // ---------------------------------------------------------------------------
   // GET /aviaries/:slug — everything the dashboard shows for one aviary
   // ---------------------------------------------------------------------------
-  app.get<{ Params: { slug: string } }>('/aviaries/:slug', async (request, reply) => {
-    const aviary = await query<{ id: string; slug: string; name: string; isActive: boolean }>(
-      `SELECT id, slug, name, is_active AS "isActive" FROM aviaries WHERE slug = $1`,
-      [request.params.slug]
-    );
-    const found = aviary.rows[0];
-    if (!found) {
-      return reply.status(404).send({ success: false, error: 'Unknown aviary' });
-    }
-
-    const [diagrams, perches, subjects, behaviors, options] = await Promise.all([
-      query<{ url: string; label: string }>(
-        `SELECT url, label FROM aviary_perch_diagrams
-         WHERE aviary_id = $1 ORDER BY sort_order, label`,
-        [found.id]
-      ),
-      query<{ value: string; label: string; group: string | null; retired: boolean }>(
-        `SELECT value, label, perch_group AS "group", retired_at IS NOT NULL AS retired
-         FROM perches WHERE aviary_id = $1 ORDER BY sort_order, value`,
-        [found.id]
-      ),
-      query<{
+  app.get<{ Params: { slug: string } }>(
+    "/aviaries/:slug",
+    async (request, reply) => {
+      const aviary = await query<{
         id: string;
+        slug: string;
         name: string;
-        species: string;
-        type: string;
-        arrivedOn: string;
-        departedOn: string | null;
-        current: boolean;
+        isActive: boolean;
       }>(
-        // id rides along for the 3C editing UI — the subject mutation
-        // endpoints (PATCH/change-type/DELETE) address episodes by UUID
-        `SELECT id, name, species, subject_type AS type,
+        `SELECT id, slug, name, is_active AS "isActive" FROM aviaries WHERE slug = $1`,
+        [request.params.slug],
+      );
+      const found = aviary.rows[0];
+      if (!found) {
+        return reply
+          .status(404)
+          .send({ success: false, error: "Unknown aviary" });
+      }
+
+      const [diagrams, perches, subjects, behaviors, options] =
+        await Promise.all([
+          query<{ url: string; label: string }>(
+            `SELECT url, label FROM aviary_perch_diagrams
+         WHERE aviary_id = $1 ORDER BY sort_order, label`,
+            [found.id],
+          ),
+          query<{
+            value: string;
+            label: string;
+            group: string | null;
+            retired: boolean;
+          }>(
+            `SELECT value, label, perch_group AS "group", retired_at IS NOT NULL AS retired
+         FROM perches WHERE aviary_id = $1 ORDER BY sort_order, value`,
+            [found.id],
+          ),
+          query<{
+            id: string;
+            name: string;
+            species: string;
+            type: string;
+            arrivedOn: string;
+            departedOn: string | null;
+            current: boolean;
+          }>(
+            // id rides along for the 3C editing UI — the subject mutation
+            // endpoints (PATCH/change-type/DELETE) address episodes by UUID
+            `SELECT id, name, species, subject_type AS type,
                 arrived_on::text AS "arrivedOn", departed_on::text AS "departedOn",
                 (arrived_on <= CURRENT_DATE
                  AND (departed_on IS NULL OR departed_on > CURRENT_DATE)) AS current
          FROM subjects WHERE aviary_id = $1
          ORDER BY arrived_on, name`,
-        [found.id]
-      ),
-      query<{ value: string }>(
-        `SELECT b.value FROM aviary_behaviors ab
+            [found.id],
+          ),
+          query<{ value: string }>(
+            `SELECT b.value FROM aviary_behaviors ab
          JOIN behaviors b ON b.id = ab.behavior_id
          WHERE ab.aviary_id = $1 ORDER BY b.excel_row_order`,
-        [found.id]
-      ),
-      query<{ kind: string; value: string }>(
-        `SELECT v.kind, v.value FROM aviary_vocab_options av
+            [found.id],
+          ),
+          query<{ kind: string; value: string }>(
+            `SELECT v.kind, v.value FROM aviary_vocab_options av
          JOIN vocab_options v ON v.id = av.vocab_option_id
          WHERE av.aviary_id = $1 ORDER BY v.kind, v.label`,
-        [found.id]
-      ),
-    ]);
+            [found.id],
+          ),
+        ]);
 
-    const enabled: Record<string, string[]> = { behaviors: behaviors.rows.map((r) => r.value) };
-    for (const kind of VOCAB_KINDS) {
-      enabled[kind] = options.rows.filter((r) => r.kind === kind).map((r) => r.value);
-    }
+      const enabled: Record<string, string[]> = {
+        behaviors: behaviors.rows.map((r) => r.value),
+      };
+      for (const kind of VOCAB_KINDS) {
+        enabled[kind] = options.rows
+          .filter((r) => r.kind === kind)
+          .map((r) => r.value);
+      }
 
-    return reply.status(200).send({
-      success: true,
-      data: {
-        slug: found.slug,
-        name: found.name,
-        isActive: found.isActive,
-        diagrams: diagrams.rows,
-        perches: perches.rows,
-        subjects: subjects.rows,
-        enabled,
-      },
-    });
-  });
+      return reply.status(200).send({
+        success: true,
+        data: {
+          slug: found.slug,
+          name: found.name,
+          isActive: found.isActive,
+          diagrams: diagrams.rows,
+          perches: perches.rows,
+          subjects: subjects.rows,
+          enabled,
+        },
+      });
+    },
+  );
 
   // ---------------------------------------------------------------------------
   // GET /vocabulary — the full catalog + per-aviary enablement matrix
   // ---------------------------------------------------------------------------
-  app.get('/vocabulary', async (_request, reply) => {
-    const [allAviaries, groups, behaviors, options, behaviorEnablement, optionEnablement] =
-      await Promise.all([
-        query<{ slug: string }>(`SELECT slug FROM aviaries ORDER BY slug`),
-        query<{ name: string; sortOrder: number }>(
-        `SELECT name, sort_order AS "sortOrder" FROM behavior_groups ORDER BY sort_order`
+  app.get("/vocabulary", async (_request, reply) => {
+    const [
+      allAviaries,
+      groups,
+      behaviors,
+      options,
+      behaviorEnablement,
+      optionEnablement,
+    ] = await Promise.all([
+      query<{ slug: string; name: string }>(
+        `SELECT slug, name FROM aviaries ORDER BY slug`,
+      ),
+      query<{ name: string; sortOrder: number }>(
+        `SELECT name, sort_order AS "sortOrder" FROM behavior_groups ORDER BY sort_order`,
       ),
       query<{
         value: string;
@@ -183,21 +216,21 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
                 b.excel_row_order AS "excelRowOrder",
                 b.retired_at IS NOT NULL AS retired
          FROM behaviors b JOIN behavior_groups g ON g.id = b.group_id
-         ORDER BY b.excel_row_order`
+         ORDER BY b.excel_row_order`,
       ),
       query<{ kind: string; value: string; label: string; retired: boolean }>(
         `SELECT kind, value, label, retired_at IS NOT NULL AS retired
-         FROM vocab_options ORDER BY kind, label`
+         FROM vocab_options ORDER BY kind, label`,
       ),
       query<{ slug: string; value: string }>(
         `SELECT a.slug, b.value FROM aviary_behaviors ab
          JOIN aviaries a ON a.id = ab.aviary_id
-         JOIN behaviors b ON b.id = ab.behavior_id`
+         JOIN behaviors b ON b.id = ab.behavior_id`,
       ),
       query<{ slug: string; kind: string; value: string }>(
         `SELECT a.slug, v.kind, v.value FROM aviary_vocab_options av
          JOIN aviaries a ON a.id = av.aviary_id
-         JOIN vocab_options v ON v.id = av.vocab_option_id`
+         JOIN vocab_options v ON v.id = av.vocab_option_id`,
       ),
     ]);
 
@@ -213,10 +246,15 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
     // freshly created blank aviary) must appear as an all-empty column in the
     // matrix, not silently vanish from it
     for (const row of allAviaries.rows) bucketFor(row.slug);
-    for (const row of behaviorEnablement.rows) bucketFor(row.slug).behaviors!.push(row.value);
-    for (const row of optionEnablement.rows) bucketFor(row.slug)[row.kind]!.push(row.value);
+    for (const row of behaviorEnablement.rows)
+      bucketFor(row.slug).behaviors!.push(row.value);
+    for (const row of optionEnablement.rows)
+      bucketFor(row.slug)[row.kind]!.push(row.value);
 
-    const optionsByKind: Record<string, { value: string; label: string; retired: boolean }[]> = {};
+    const optionsByKind: Record<
+      string,
+      { value: string; label: string; retired: boolean }[]
+    > = {};
     for (const kind of VOCAB_KINDS) {
       optionsByKind[kind] = options.rows
         .filter((r) => r.kind === kind)
@@ -226,6 +264,9 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(200).send({
       success: true,
       data: {
+        // slug → display name, so the enablement matrix can head columns with
+        // names staff recognize instead of raw slugs
+        aviaries: allAviaries.rows,
         behaviorGroups: groups.rows,
         behaviors: behaviors.rows,
         options: optionsByKind,
@@ -237,22 +278,36 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
   // ---------------------------------------------------------------------------
   // GET /config-versions — published history, newest first
   // ---------------------------------------------------------------------------
-  app.get('/config-versions', async (_request, reply) => {
-    const versions = await query<{ version: number; publishedAt: string; notes: string | null }>(
-      `SELECT id AS version, published_at AS "publishedAt", notes
-       FROM config_versions ORDER BY id DESC`
+  app.get("/config-versions", async (_request, reply) => {
+    const versions = await query<{
+      version: number;
+      publishedAt: string;
+      notes: string | null;
+      publishedBy: string | null;
+    }>(
+      // published_by (migration 008) answers "who changed this" for rotating
+      // volunteer staff; NULL = a pre-dashboard engineering-script publish
+      `SELECT cv.id AS version, cv.published_at AS "publishedAt", cv.notes,
+              u.display_name AS "publishedBy"
+       FROM config_versions cv
+       LEFT JOIN admin_users u ON u.id = cv.published_by
+       ORDER BY cv.id DESC`,
     );
-    return reply.status(200).send({ success: true, data: { versions: versions.rows } });
+    return reply
+      .status(200)
+      .send({ success: true, data: { versions: versions.rows } });
   });
 
   // ---------------------------------------------------------------------------
   // GET /submissions — recent observations (P3-D6); Excel download reuses the
   // existing public GET /api/observations/:id/excel (the UUID is the capability)
   // ---------------------------------------------------------------------------
-  app.get('/submissions', async (request, reply) => {
+  app.get("/submissions", async (request, reply) => {
     const parsed = submissionsQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.status(400).send({ success: false, error: 'Invalid filter parameters' });
+      return reply
+        .status(400)
+        .send({ success: false, error: "Invalid filter parameters" });
     }
     const { from, to, observer, aviary, limit, offset } = parsed.data;
 
@@ -271,13 +326,16 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
       where.push(`o.observer_name ILIKE $${params.length}`);
     }
     if (aviary) {
-      // Matches the resolved aviary's slug, or the legacy free-text column for
-      // rows that predate slug resolution
-      params.push(aviary);
-      where.push(`(a.slug = $${params.length} OR o.aviary = $${params.length})`);
+      // Match on display name, slug, or the legacy free-text column, all as a
+      // substring (like the observer filter) — staff type the aviary name they
+      // see everywhere else, not the slug
+      params.push(`%${aviary}%`);
+      where.push(
+        `(a.name ILIKE $${params.length} OR a.slug ILIKE $${params.length} OR o.aviary ILIKE $${params.length})`,
+      );
     }
 
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const fromSql = `FROM observations o LEFT JOIN aviaries a ON a.id = o.aviary_id ${whereSql}`;
 
     const [items, total] = await Promise.all([
@@ -301,9 +359,12 @@ export const adminReadRoutes: FastifyPluginAsync = async (app) => {
          ${fromSql}
          ORDER BY o.submitted_at DESC
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        [...params, limit, offset]
+        [...params, limit, offset],
       ),
-      query<{ count: number }>(`SELECT COUNT(*)::int AS count ${fromSql}`, params),
+      query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count ${fromSql}`,
+        params,
+      ),
     ]);
 
     return reply.status(200).send({

@@ -262,6 +262,17 @@ describe("perches", () => {
       );
       expect(response.statusCode, `value ${JSON.stringify(value)}`).toBe(400);
     }
+    // The message names the actual problem (not "fields missing") so staff
+    // aren't dead-ended
+    const slashed = await authed(
+      "POST",
+      `/api/admin/aviaries/${AVIARY}/perches`,
+      {
+        value: "a/b",
+        label: "X",
+      },
+    );
+    expect(slashed.json().error).toMatch(/slashes or invisible characters/);
   });
 
   it("rejects sort orders beyond the integer column range", async () => {
@@ -424,6 +435,23 @@ describe("perch diagrams (replace-set)", () => {
       },
     );
     expect(response.statusCode).toBe(400);
+  });
+
+  it("blames the field, not the count, when a label is too long", async () => {
+    // A >255-char label is a too_big at a nested path, not the array's own
+    // .max(12) — the error must name the field, not tell staff to remove a
+    // diagram (which would never clear it)
+    const url = await mintUrl("Overlong");
+    const response = await authed(
+      "PUT",
+      `/api/admin/aviaries/${AVIARY}/diagrams`,
+      {
+        diagrams: [{ url, label: "N".repeat(256) }],
+      },
+    );
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatch(/retype it/);
+    expect(response.json().error).not.toMatch(/at most 12/);
   });
 
   it("keeps an already-current URL editable even if it predates the upload base", async () => {
