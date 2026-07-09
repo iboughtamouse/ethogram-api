@@ -21,6 +21,10 @@ const publishSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
   confirmFlagChanges: z.boolean().optional(),
   confirmRowMapChanges: z.boolean().optional(),
+  // The fingerprint the reviewer's diff was computed from (FU-9). If present
+  // and the draft has since moved, publish is refused so they re-review. md5
+  // hex is 32 chars.
+  expectedFingerprint: z.string().length(32).optional(),
 });
 
 export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
@@ -32,8 +36,13 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
     // they come from one snapshot — a concurrent draft edit can't make the
     // flag disagree with the document it describes
     const [snapshotResult, priorsResult] = await Promise.all([
-      query<{ config: ConfigDoc; identical: boolean }>(
+      query<{ config: ConfigDoc; fingerprint: string; identical: boolean }>(
+        // fingerprint = a content hash of the composed draft; the client sends
+        // it back on publish so the server can 409 if the draft moved between
+        // this review and the click (FU-9). compose_config()::text is canonical
+        // (jsonb sorts keys), so it's stable for identical content.
         `SELECT compose_config() AS config,
+                md5(compose_config()::text) AS fingerprint,
                 compose_config() IS NOT DISTINCT FROM
                   (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS identical`,
       ),
@@ -56,6 +65,7 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
       success: true,
       data: {
         identical: snapshotResult.rows[0]!.identical,
+        fingerprint: snapshotResult.rows[0]!.fingerprint,
         latestVersion: latest?.version ?? null,
         changes: summary.changes,
         flagChanges: summary.flagChanges,
@@ -92,12 +102,33 @@ export const adminConfigRoutes: FastifyPluginAsync = async (app) => {
       // (the gate sees one state, the insert another)
       const snapshot = await client.query<{
         config: ConfigDoc;
+        fingerprint: string;
         identical: boolean;
       }>(
         `SELECT compose_config() AS config,
+                md5(compose_config()::text) AS fingerprint,
                 compose_config() IS NOT DISTINCT FROM
                   (SELECT config FROM config_versions ORDER BY id DESC LIMIT 1) AS identical`,
       );
+
+      // FU-9: if the caller reviewed a diff and the draft has since moved
+      // (another admin, or a second tab), the change set now differs from what
+      // they approved — refuse and make them re-review. Checked first, before
+      // the no-op/violation/confirmation gates, because any of those verdicts
+      // could also have changed. Backward-compatible: a client that omits the
+      // fingerprint skips the check.
+      if (
+        parsed.data.expectedFingerprint &&
+        parsed.data.expectedFingerprint !== snapshot.rows[0]!.fingerprint
+      ) {
+        await client.query("ROLLBACK");
+        return reply.status(409).send({
+          success: false,
+          error:
+            "The draft changed since you opened this review — reload the diff and check it again before publishing.",
+        });
+      }
+
       if (snapshot.rows[0]!.identical) {
         await client.query("ROLLBACK");
         return reply.status(409).send({
