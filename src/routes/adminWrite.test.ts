@@ -33,6 +33,9 @@ function authed(
  * Covers every wtest-* aviary (the clone tests create wtest-clone). */
 async function sweep(): Promise<void> {
   const owned = `(SELECT id FROM aviaries WHERE slug LIKE 'wtest-%')`;
+  // The has-observations delete-guard test inserts an observation against a
+  // wtest aviary; clear those first so the aviaries DELETE below isn't FK-blocked
+  await query(`DELETE FROM observations WHERE aviary_id IN ${owned}`);
   await query(`DELETE FROM aviary_behaviors WHERE aviary_id IN ${owned}`);
   await query(`DELETE FROM aviary_vocab_options WHERE aviary_id IN ${owned}`);
   await query(`DELETE FROM aviary_perch_diagrams WHERE aviary_id IN ${owned}`);
@@ -206,6 +209,98 @@ describe("aviaries", () => {
       (await authed("PATCH", "/api/admin/aviaries/nowhere", { name: "X" }))
         .statusCode,
     ).toBe(404);
+  });
+
+  it("deletes a never-published draft aviary and all its config children", async () => {
+    // Clone gives it perches + enablement junctions; add a subject + diagram so
+    // every child table is exercised
+    const created = await authed("POST", "/api/admin/aviaries", {
+      slug: "wtest-del",
+      name: "WTest Del",
+      cloneFrom: "sayyidas-cove",
+    });
+    expect(created.statusCode).toBe(201);
+    const id = (
+      await query<{ id: string }>(
+        `SELECT id FROM aviaries WHERE slug = 'wtest-del'`,
+      )
+    ).rows[0]!.id;
+    await query(
+      `INSERT INTO subjects (aviary_id, name, species, subject_type, arrived_on)
+       VALUES ($1, 'Test Bird', 'Barred Owl', 'foster_parent', '2026-01-01')`,
+      [id],
+    );
+    await query(
+      `INSERT INTO aviary_perch_diagrams (aviary_id, url, label, sort_order)
+       VALUES ($1, 'https://pub-x.r2.dev/perch-diagram-wtest-del-v1.webp', 'View', 0)`,
+      [id],
+    );
+
+    const del = await authed("DELETE", "/api/admin/aviaries/wtest-del");
+    expect(del.statusCode).toBe(200);
+    expect(del.json().data.slug).toBe("wtest-del");
+
+    const remaining = (
+      await query<{ n: string }>(
+        `SELECT (
+           (SELECT COUNT(*) FROM aviaries WHERE id = $1)
+           + (SELECT COUNT(*) FROM perches WHERE aviary_id = $1)
+           + (SELECT COUNT(*) FROM subjects WHERE aviary_id = $1)
+           + (SELECT COUNT(*) FROM aviary_perch_diagrams WHERE aviary_id = $1)
+           + (SELECT COUNT(*) FROM aviary_behaviors WHERE aviary_id = $1)
+           + (SELECT COUNT(*) FROM aviary_vocab_options WHERE aviary_id = $1)
+         )::text AS n`,
+        [id],
+      )
+    ).rows[0]!.n;
+    expect(remaining).toBe("0");
+
+    const audit = await query(
+      `SELECT id FROM audit_log WHERE entity = 'aviary' AND action = 'delete' AND entity_id = 'wtest-del'`,
+    );
+    expect(audit.rows).toHaveLength(1);
+  });
+
+  it("refuses to delete an aviary that is in a published version (deactivate instead)", async () => {
+    // sayyidas-cove is present in every published config version
+    const del = await authed("DELETE", "/api/admin/aviaries/sayyidas-cove");
+    expect(del.statusCode).toBe(409);
+    expect(del.json().error).toMatch(/published config version/);
+    expect(
+      (await query(`SELECT 1 FROM aviaries WHERE slug = 'sayyidas-cove'`)).rows,
+    ).toHaveLength(1);
+  });
+
+  it("refuses to delete a draft aviary that has observations", async () => {
+    const created = await authed("POST", "/api/admin/aviaries", {
+      slug: "wtest-obs",
+      name: "WTest Obs",
+    });
+    expect(created.statusCode).toBe(201);
+    const id = (
+      await query<{ id: string }>(
+        `SELECT id FROM aviaries WHERE slug = 'wtest-obs'`,
+      )
+    ).rows[0]!.id;
+    await query(
+      `INSERT INTO observations (observer_name, observation_date, start_time, end_time, aviary, time_slots, aviary_id)
+       VALUES ('Guard', '2026-03-01', '14:00', '14:05', 'wtest-obs', '{}'::jsonb, $1)`,
+      [id],
+    );
+
+    const del = await authed("DELETE", "/api/admin/aviaries/wtest-obs");
+    expect(del.statusCode).toBe(409);
+    expect(del.json().error).toMatch(/observations/);
+    // The aviary is untouched; drop the observation so sweep can remove it
+    expect(
+      (await query(`SELECT 1 FROM aviaries WHERE slug = 'wtest-obs'`)).rows,
+    ).toHaveLength(1);
+    await query(`DELETE FROM observations WHERE aviary_id = $1`, [id]);
+  });
+
+  it("404s deleting an unknown aviary", async () => {
+    const del = await authed("DELETE", "/api/admin/aviaries/nope-nope");
+    expect(del.statusCode).toBe(404);
   });
 });
 
